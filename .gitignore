@@ -13,12 +13,17 @@ dist/
 
 # deps
 node_modules/
-.wrangler
 
 # env
 .env
 .env.production
 .dev.vars
+
+# wrangler - tmp 빌드 파일만 제외, state(로컬 D1 DB)는 보존
+.wrangler/tmp/
+# SQLite 저널 파일 (런타임 임시파일)
+*.sqlite-wal
+*.sqlite-shm
 
 # logs
 logs/
