@@ -296,10 +296,20 @@ async function initApp() {
 
 // ==================== 네비게이션 ====================
 function navigate(page) {
+  const sidebar = document.getElementById('sidebar');
+  // 이미 활성화된 메뉴를 다시 클릭하면 사이드바 토글 (모바일/데스크탑 공통)
+  if (currentPage === page) {
+    sidebar?.classList.toggle('open');
+    return;
+  }
   currentPage = page;
   document.querySelectorAll('.sidebar-link[data-page]').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page);
   });
+  // 모바일에서 메뉴 선택 후 사이드바 닫기
+  if (window.innerWidth < 768) {
+    sidebar?.classList.remove('open');
+  }
   clearInterval(chatPollingInterval);
   renderPage(page);
 }
