@@ -61,14 +61,39 @@ function parseDate(raw: string): string | null {
   return null
 }
 
+// ── 디버그용: 요청을 그대로 반환 (Apps Script 연동 확인용) ────────
+webhook.post('/google-forms/debug', async (c) => {
+  const contentType = c.req.header('content-type') || ''
+  let body: any = null
+  let rawText = ''
+  try {
+    rawText = await c.req.text()
+    body = JSON.parse(rawText)
+  } catch {
+    body = rawText
+  }
+  console.log('[DEBUG webhook]', JSON.stringify({ contentType, body }))
+  return c.json({
+    received: true,
+    content_type: contentType,
+    body,
+    timestamp: new Date().toISOString()
+  })
+})
+
 // ── Google Forms Webhook 수신 엔드포인트 ────────────────────────
 // Apps Script 에서 POST {name, leave_type, start_date, end_date, half_day, reason, secret}
 webhook.post('/google-forms', async (c) => {
+  // 어떤 형식으로 오든 원본 텍스트를 먼저 읽어서 로그
   let body: Record<string, string>
+  let rawText = ''
   try {
-    body = await c.req.json()
+    rawText = await c.req.text()
+    console.log('[Webhook RAW]', rawText.slice(0, 500))
+    body = JSON.parse(rawText)
   } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400)
+    console.log('[Webhook 파싱실패] Content-Type:', c.req.header('content-type'), 'Raw:', rawText.slice(0, 200))
+    return c.json({ error: 'Invalid JSON body', raw: rawText.slice(0, 200) }, 400)
   }
 
   // ── 시크릿 키 검증 (선택적 보안) ─────────────────────────────
