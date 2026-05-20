@@ -1921,120 +1921,425 @@ async function deletePos(id, name) {
   renderPositionsTab(content);
 }
 
-// ── 연차 설정 탭 ──────────────────────────────
+// ── 연차 설정 탭 (회계연도 기반) ──────────────────────────────
+let fySubTab = 'list';     // 'list' | 'grants'
+let fySelectedYear = null; // 현재 선택된 회계연도 (grants 뷰용)
+
 async function renderAnnualLeaveTab(container) {
   container.innerHTML = '<div class="text-gray-400 py-8 text-center"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div>';
-  const depts = await api('GET', '/settings/departments');
-  if (depts.error) { container.innerHTML = \`<p class="text-red-500">\${depts.error}</p>\`; return; }
+  fySubTab = 'list';
+  await renderFYList(container);
+}
 
-  const deptOptions = depts.map(d => \`<option value="\${escHtml(d.name)}">\${escHtml(d.name)} (기본 \${d.default_annual_leave}일)</option>\`).join('');
+// ── 회계연도 목록 화면 ─────────────────────────
+async function renderFYList(container) {
+  container.innerHTML = '<div class="text-gray-400 py-8 text-center"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div>';
+  const fyList = await api('GET', '/settings/fiscal-years');
+  if (fyList.error) { container.innerHTML = \`<p class="text-red-500">\${fyList.error}</p>\`; return; }
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+
+  const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
 
   container.innerHTML = \`
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div class="space-y-5">
 
-      <!-- 전체 일괄 적용 -->
-      <div class="card p-6">
-        <h3 class="text-lg font-semibold text-gray-700 mb-1"><i class="fas fa-users mr-2 text-green-500"></i>전체 직원 연차 일괄 적용</h3>
-        <p class="text-xs text-gray-400 mb-5">모든 직원의 연차 총 일수를 일괄 변경합니다.</p>
-        <div class="flex gap-3 items-end">
-          <div class="flex-1">
-            <label class="block text-sm font-medium text-gray-700 mb-1">연차 일수</label>
-            <input id="all-annual-days" type="number" min="0" max="365" value="15"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
-          </div>
-          <button onclick="applyAllAnnualLeave()"
-            class="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
-            <i class="fas fa-check mr-1"></i>전체 적용
-          </button>
+      <!-- 헤더 -->
+      <div class="flex justify-between items-center">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800"><i class="fas fa-calendar-alt mr-2 text-indigo-500"></i>회계연도 관리</h3>
+          <p class="text-xs text-gray-400 mt-0.5">연도별 연차 기준일수 및 운영 기간을 설정합니다.</p>
         </div>
-        <div id="all-annual-msg" class="mt-3 text-sm hidden"></div>
+        <button onclick="openFYModal()"
+          class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+          <i class="fas fa-plus mr-1"></i>회계연도 추가
+        </button>
       </div>
 
-      <!-- 부서별 적용 -->
-      <div class="card p-6">
-        <h3 class="text-lg font-semibold text-gray-700 mb-1"><i class="fas fa-building mr-2 text-indigo-500"></i>부서별 연차 일괄 적용</h3>
-        <p class="text-xs text-gray-400 mb-5">선택한 부서 직원들의 연차 총 일수를 일괄 변경합니다.</p>
-        <div class="space-y-3">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">부서 선택</label>
-            <select id="dept-annual-select"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
-              \${deptOptions}
-            </select>
-          </div>
-          <div class="flex gap-3 items-end">
-            <div class="flex-1">
-              <label class="block text-sm font-medium text-gray-700 mb-1">연차 일수</label>
-              <input id="dept-annual-days" type="number" min="0" max="365" value="15"
+      <!-- 회계연도 카드 목록 -->
+      <div id="fy-card-list" class="grid grid-cols-1 gap-4">
+        \${fyList.length === 0 ? '<div class="card p-8 text-center text-gray-400">등록된 회계연도가 없습니다.</div>' :
+          fyList.map(fy => {
+            const sm = monthNames[fy.start_month - 1] || fy.start_month + '월';
+            const em = monthNames[fy.end_month   - 1] || fy.end_month   + '월';
+            const isActive = fy.is_active === 1;
+            const isCurrent = fy.fiscal_year === currentYear;
+            return \`
+              <div class="card p-5 \${isActive ? 'ring-2 ring-indigo-400' : ''}">
+                <div class="flex items-center justify-between flex-wrap gap-3">
+                  <div class="flex items-center gap-3">
+                    <div class="w-14 h-14 rounded-xl flex items-center justify-center text-xl font-bold \${isActive ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600'}">
+                      \${fy.fiscal_year}
+                    </div>
+                    <div>
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-semibold text-gray-800 text-base">\${fy.fiscal_year}년도 회계연도</span>
+                        \${isActive ? '<span class="badge bg-indigo-100 text-indigo-700"><i class="fas fa-circle text-indigo-500 mr-1" style="font-size:7px"></i>운영 중</span>' : ''}
+                        \${isCurrent ? '<span class="badge bg-green-100 text-green-700">현재 연도</span>' : ''}
+                      </div>
+                      <div class="text-sm text-gray-500 mt-0.5 flex items-center gap-3 flex-wrap">
+                        <span><i class="fas fa-calendar-day mr-1 text-gray-400"></i>\${fy.fiscal_year}년 \${sm} ~ \${fy.fiscal_year + (fy.start_month > 1 ? 1 : 0)}년 \${em}</span>
+                        <span><i class="fas fa-sun mr-1 text-amber-400"></i>기본 <strong class="text-gray-700">\${fy.default_days}일</strong> 부여</span>
+                        <span><i class="fas fa-users mr-1 text-blue-400"></i>부여 완료: <strong class="text-gray-700">\${fy.granted_count}명</strong></span>
+                      </div>
+                      \${fy.note ? \`<div class="text-xs text-gray-400 mt-1"><i class="fas fa-sticky-note mr-1"></i>\${fy.note}</div>\` : ''}
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    \${!isActive ? \`
+                      <button onclick="activateFY(\${fy.id}, \${fy.fiscal_year})"
+                        class="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 text-indigo-600 hover:bg-indigo-50 font-medium transition-colors">
+                        <i class="fas fa-check-circle mr-1"></i>운영 설정
+                      </button>\` : ''}
+                    <button onclick="openFYGrantModal(\${fy.id}, \${fy.fiscal_year}, \${fy.default_days})"
+                      class="text-xs px-3 py-1.5 rounded-lg border border-green-300 text-green-700 hover:bg-green-50 font-medium transition-colors">
+                      <i class="fas fa-gift mr-1"></i>연차 일괄 부여
+                    </button>
+                    <button onclick="openFYGrantDetail(\${fy.fiscal_year})"
+                      class="text-xs px-3 py-1.5 rounded-lg border border-blue-300 text-blue-600 hover:bg-blue-50 font-medium transition-colors">
+                      <i class="fas fa-list mr-1"></i>부여 현황
+                    </button>
+                    <button onclick="openFYModal(\${fy.id}, \${fy.fiscal_year}, \${fy.start_month}, \${fy.default_days}, '\${escHtml(fy.note||'')}')"
+                      class="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 font-medium transition-colors">
+                      <i class="fas fa-edit mr-1"></i>수정
+                    </button>
+                    <button onclick="deleteFY(\${fy.id}, \${fy.fiscal_year})"
+                      class="text-xs px-3 py-1.5 rounded-lg border border-red-300 text-red-500 hover:bg-red-50 font-medium transition-colors">
+                      <i class="fas fa-trash mr-1"></i>삭제
+                    </button>
+                  </div>
+                </div>
+              </div>
+            \`;
+          }).join('')}
+      </div>
+
+    </div>
+
+    <!-- 회계연도 추가/수정 모달 -->
+    <div id="fy-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
+      <div class="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <h4 id="fy-modal-title" class="text-lg font-bold text-gray-800 mb-5"></h4>
+        <input type="hidden" id="fy-edit-id" />
+        <div class="space-y-4">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">회계연도 <span class="text-red-500">*</span></label>
+              <input id="fy-year" type="number" min="2000" max="2099" placeholder="\${currentYear}"
                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
             </div>
-            <button onclick="applyDeptAnnualLeave()"
-              class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
-              <i class="fas fa-check mr-1"></i>부서 적용
-            </button>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">시작월 <span class="text-red-500">*</span></label>
+              <select id="fy-start-month"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                \${monthNames.map((m,i) => \`<option value="\${i+1}">\${m}</option>\`).join('')}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">기본 연차 일수</label>
+            <div class="flex items-center gap-2">
+              <input id="fy-default-days" type="number" min="0" max="365" value="15"
+                class="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              <span class="text-sm text-gray-500">일 (전체 직원 부여 시 기본값)</span>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+            <input id="fy-note" type="text"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="예) 4월 회계연도 적용" />
           </div>
         </div>
-        <div id="dept-annual-msg" class="mt-3 text-sm hidden"></div>
+        <p class="text-xs text-gray-400 mt-3"><i class="fas fa-info-circle mr-1"></i>종료월은 시작월 기준으로 자동 계산됩니다. (예: 4월 시작 → 다음해 3월 종료)</p>
+        <div id="fy-modal-err" class="text-red-500 text-sm mt-3 hidden"></div>
+        <div class="flex gap-3 mt-5">
+          <button onclick="saveFY()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg font-medium transition-colors">저장</button>
+          <button onclick="closeFYModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg font-medium transition-colors">취소</button>
+        </div>
       </div>
+    </div>
 
-      <!-- 부서별 기본 연차 현황 -->
-      <div class="card p-6 md:col-span-2">
-        <h3 class="text-lg font-semibold text-gray-700 mb-4"><i class="fas fa-table mr-2 text-purple-500"></i>부서별 기본 연차 현황</h3>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-gray-50">
-              <tr>
-                <th class="px-4 py-3 text-left text-gray-600 font-semibold rounded-tl-lg">부서명</th>
-                <th class="px-4 py-3 text-center text-gray-600 font-semibold">기본 연차일수</th>
-                <th class="px-4 py-3 text-left text-gray-600 font-semibold rounded-tr-lg">설명</th>
-              </tr>
-            </thead>
-            <tbody>
-              \${depts.map(d => \`
-                <tr class="border-t border-gray-100 hover:bg-gray-50">
-                  <td class="px-4 py-3 font-medium text-gray-800"><i class="fas fa-building mr-2 text-indigo-300"></i>\${d.name}</td>
-                  <td class="px-4 py-3 text-center"><span class="badge bg-blue-100 text-blue-700">\${d.default_annual_leave}일</span></td>
-                  <td class="px-4 py-3 text-gray-500">\${d.description || '-'}</td>
-                </tr>
-              \`).join('')}
-            </tbody>
-          </table>
+    <!-- 연차 일괄 부여 모달 -->
+    <div id="fy-grant-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
+      <div class="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <h4 class="text-lg font-bold text-gray-800 mb-1">연차 일괄 부여</h4>
+        <p id="fy-grant-subtitle" class="text-sm text-gray-500 mb-5"></p>
+        <input type="hidden" id="fy-grant-year" />
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">부여 일수 <span class="text-red-500">*</span></label>
+            <div class="flex items-center gap-2">
+              <input id="fy-grant-days" type="number" min="0" max="365"
+                class="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              <span class="text-sm text-gray-500">일</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+            <input type="checkbox" id="fy-grant-overwrite" class="rounded" />
+            <label for="fy-grant-overwrite" class="text-sm text-amber-800 cursor-pointer">
+              <i class="fas fa-exclamation-triangle mr-1 text-amber-500"></i>이미 부여된 직원도 덮어쓰기
+            </label>
+          </div>
+        </div>
+        <div id="fy-grant-msg" class="mt-3 text-sm hidden"></div>
+        <div class="flex gap-3 mt-5">
+          <button onclick="bulkGrantLeave()" class="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-medium transition-colors">
+            <i class="fas fa-gift mr-1"></i>전체 부여 실행
+          </button>
+          <button onclick="closeFYGrantModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg font-medium transition-colors">취소</button>
         </div>
       </div>
     </div>
   \`;
 }
 
-async function applyAllAnnualLeave() {
-  const days = Number(document.getElementById('all-annual-days').value);
-  if (!days || days < 0) { alert('올바른 연차 일수를 입력해주세요.'); return; }
-  if (!confirm(\`전체 직원의 연차를 \${days}일로 일괄 변경하시겠습니까?\`)) return;
-  const msgEl = document.getElementById('all-annual-msg');
-  msgEl.classList.add('hidden');
-  const res = await api('POST', '/settings/apply-annual-leave', { department: 'all', days });
-  if (res.error) {
-    msgEl.textContent = res.error; msgEl.className = 'mt-3 text-sm text-red-500'; msgEl.classList.remove('hidden'); return;
-  }
-  msgEl.textContent = res.updated + '명의 연차가 ' + days + '일로 변경되었습니다.';
-  msgEl.className = 'mt-3 text-sm text-green-600';
-  msgEl.classList.remove('hidden');
+// ── 부여 현황 상세 화면 ────────────────────────
+async function openFYGrantDetail(fiscalYear) {
+  fySelectedYear = fiscalYear;
+  const container = document.getElementById('settings-tab-content');
+  container.innerHTML = '<div class="text-gray-400 py-8 text-center"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div>';
+  const grants = await api('GET', '/settings/leave-grants/' + fiscalYear);
+  if (grants.error) { container.innerHTML = \`<p class="text-red-500">\${grants.error}</p>\`; return; }
+
+  container.innerHTML = \`
+    <div class="space-y-4">
+      <div class="flex items-center gap-3">
+        <button onclick="renderAnnualLeaveTab(document.getElementById('settings-tab-content'))"
+          class="text-gray-500 hover:text-gray-700 flex items-center gap-1 text-sm font-medium hover:bg-gray-100 px-3 py-1.5 rounded-lg transition-colors">
+          <i class="fas fa-arrow-left mr-1"></i>목록으로
+        </button>
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800"><i class="fas fa-list mr-2 text-blue-500"></i>\${fiscalYear}년도 연차 부여 현황</h3>
+          <p class="text-xs text-gray-400">\${grants.length}명에게 부여됨</p>
+        </div>
+      </div>
+
+      \${grants.length === 0 ? \`
+        <div class="card p-8 text-center text-gray-400">
+          <i class="fas fa-inbox text-4xl mb-3 block opacity-30"></i>
+          \${fiscalYear}년도 부여 내역이 없습니다.
+          <div class="mt-3">
+            <button onclick="renderAnnualLeaveTab(document.getElementById('settings-tab-content'))"
+              class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">← 목록으로 돌아가 일괄 부여하기</button>
+          </div>
+        </div>
+      \` : \`
+        <div class="card overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-4 py-3 text-left text-gray-600 font-semibold">사원번호</th>
+                  <th class="px-4 py-3 text-left text-gray-600 font-semibold">이름</th>
+                  <th class="px-4 py-3 text-left text-gray-600 font-semibold">부서</th>
+                  <th class="px-4 py-3 text-left text-gray-600 font-semibold">직급</th>
+                  <th class="px-4 py-3 text-center text-gray-600 font-semibold">부여일수</th>
+                  <th class="px-4 py-3 text-center text-gray-600 font-semibold">사용일수</th>
+                  <th class="px-4 py-3 text-center text-gray-600 font-semibold">잔여</th>
+                  <th class="px-4 py-3 text-center text-gray-600 font-semibold">수정</th>
+                </tr>
+              </thead>
+              <tbody>
+                \${grants.map(g => {
+                  const remaining = g.granted_days - g.used_days;
+                  const pct = g.granted_days > 0 ? Math.round((g.used_days / g.granted_days) * 100) : 0;
+                  const barColor = pct >= 80 ? 'bg-red-400' : pct >= 50 ? 'bg-amber-400' : 'bg-indigo-500';
+                  return \`
+                    <tr class="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+                      <td class="px-4 py-3 text-gray-500 text-xs">\${g.employee_id}</td>
+                      <td class="px-4 py-3 font-medium text-gray-800">\${g.name}</td>
+                      <td class="px-4 py-3 text-gray-600">\${g.department}</td>
+                      <td class="px-4 py-3 text-gray-600">\${g.position}</td>
+                      <td class="px-4 py-3 text-center">
+                        <span class="font-semibold text-indigo-700">\${g.granted_days}일</span>
+                      </td>
+                      <td class="px-4 py-3 text-center text-gray-600">\${g.used_days}일</td>
+                      <td class="px-4 py-3 text-center">
+                        <div class="flex items-center gap-2 justify-center">
+                          <span class="font-medium \${remaining < 3 ? 'text-red-600' : 'text-green-700'}">\${remaining}일</span>
+                          <div class="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div class="\${barColor} h-full rounded-full" style="width:\${pct}%"></div>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="px-4 py-3 text-center">
+                        <button onclick="openGrantEditModal(\${g.id}, '\${escHtml(g.name)}', \${g.granted_days}, '\${escHtml(g.note||'')}')"
+                          class="text-xs px-2.5 py-1 rounded border border-indigo-300 text-indigo-600 hover:bg-indigo-50 font-medium transition-colors">
+                          <i class="fas fa-edit"></i>
+                        </button>
+                      </td>
+                    </tr>
+                  \`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      \`}
+    </div>
+
+    <!-- 개별 부여일수 수정 모달 -->
+    <div id="grant-edit-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
+      <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <h4 class="text-lg font-bold text-gray-800 mb-1">연차 수정</h4>
+        <p id="grant-edit-name" class="text-sm text-gray-500 mb-4"></p>
+        <input type="hidden" id="grant-edit-id" />
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">부여 일수</label>
+            <div class="flex items-center gap-2">
+              <input id="grant-edit-days" type="number" min="0" max="365"
+                class="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              <span class="text-sm text-gray-500">일</span>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+            <input id="grant-edit-note" type="text"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="수정 사유 (선택)" />
+          </div>
+        </div>
+        <div id="grant-edit-err" class="text-red-500 text-sm mt-3 hidden"></div>
+        <div class="flex gap-3 mt-5">
+          <button onclick="saveGrantEdit()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg font-medium transition-colors">저장</button>
+          <button onclick="closeGrantEditModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg font-medium transition-colors">취소</button>
+        </div>
+      </div>
+    </div>
+  \`;
 }
 
-async function applyDeptAnnualLeave() {
-  const dept = document.getElementById('dept-annual-select').value;
-  const days = Number(document.getElementById('dept-annual-days').value);
-  if (!days || days < 0) { alert('올바른 연차 일수를 입력해주세요.'); return; }
-  if (!dept) { alert('부서를 선택해주세요.'); return; }
-  if (!confirm(\`[\${dept}] 부서 직원의 연차를 \${days}일로 일괄 변경하시겠습니까?\`)) return;
-  const msgEl = document.getElementById('dept-annual-msg');
+// ── 회계연도 모달 함수 ─────────────────────────
+function openFYModal(id, year, startMonth, defaultDays, note) {
+  document.getElementById('fy-modal').classList.remove('hidden');
+  document.getElementById('fy-modal-err').classList.add('hidden');
+  if (id) {
+    document.getElementById('fy-modal-title').textContent = '회계연도 수정';
+    document.getElementById('fy-edit-id').value = id;
+    document.getElementById('fy-year').value = year;
+    document.getElementById('fy-start-month').value = startMonth || 1;
+    document.getElementById('fy-default-days').value = defaultDays != null ? defaultDays : 15;
+    document.getElementById('fy-note').value = note || '';
+  } else {
+    document.getElementById('fy-modal-title').textContent = '회계연도 추가';
+    document.getElementById('fy-edit-id').value = '';
+    document.getElementById('fy-year').value = new Date().getFullYear() + 1;
+    document.getElementById('fy-start-month').value = 1;
+    document.getElementById('fy-default-days').value = 15;
+    document.getElementById('fy-note').value = '';
+  }
+}
+
+function closeFYModal() {
+  document.getElementById('fy-modal').classList.add('hidden');
+}
+
+async function saveFY() {
+  const id = document.getElementById('fy-edit-id').value;
+  const fiscal_year = Number(document.getElementById('fy-year').value);
+  const start_month = Number(document.getElementById('fy-start-month').value);
+  const default_days = Number(document.getElementById('fy-default-days').value) || 15;
+  const note = document.getElementById('fy-note').value.trim();
+  const errEl = document.getElementById('fy-modal-err');
+
+  if (!fiscal_year || fiscal_year < 2000) {
+    errEl.textContent = '올바른 연도를 입력해주세요. (2000 이상)';
+    errEl.classList.remove('hidden'); return;
+  }
+
+  const method = id ? 'PUT' : 'POST';
+  const endpoint = id ? '/settings/fiscal-years/' + id : '/settings/fiscal-years';
+  const res = await api(method, endpoint, { fiscal_year, start_month, default_days, note });
+  if (res.error) { errEl.textContent = res.error; errEl.classList.remove('hidden'); return; }
+
+  closeFYModal();
+  renderAnnualLeaveTab(document.getElementById('settings-tab-content'));
+}
+
+async function deleteFY(id, year) {
+  if (!confirm(\`\${year}년도 회계연도를 삭제하시겠습니까?\nⓘ 연차 부여 내역이 있으면 삭제할 수 없습니다.\`)) return;
+  const res = await api('DELETE', '/settings/fiscal-years/' + id);
+  if (res.error) { alert(res.error); return; }
+  renderAnnualLeaveTab(document.getElementById('settings-tab-content'));
+}
+
+async function activateFY(id, year) {
+  if (!confirm(\`\${year}년도를 현재 운영 중인 회계연도로 설정하시겠습니까?\`)) return;
+  const res = await api('POST', '/settings/fiscal-years/' + id + '/activate');
+  if (res.error) { alert(res.error); return; }
+  renderAnnualLeaveTab(document.getElementById('settings-tab-content'));
+}
+
+// ── 일괄 부여 모달 ────────────────────────────
+function openFYGrantModal(id, year, defaultDays) {
+  document.getElementById('fy-grant-modal').classList.remove('hidden');
+  document.getElementById('fy-grant-year').value = year;
+  document.getElementById('fy-grant-days').value = defaultDays || 15;
+  document.getElementById('fy-grant-overwrite').checked = false;
+  document.getElementById('fy-grant-subtitle').textContent = year + '년도 전체 직원에게 연차를 일괄 부여합니다.';
+  const msgEl = document.getElementById('fy-grant-msg');
   msgEl.classList.add('hidden');
-  const res = await api('POST', '/settings/apply-annual-leave', { department: dept, days });
+}
+
+function closeFYGrantModal() {
+  document.getElementById('fy-grant-modal').classList.add('hidden');
+}
+
+async function bulkGrantLeave() {
+  const fiscal_year = Number(document.getElementById('fy-grant-year').value);
+  const days = Number(document.getElementById('fy-grant-days').value);
+  const overwrite = document.getElementById('fy-grant-overwrite').checked;
+  const msgEl = document.getElementById('fy-grant-msg');
+
+  if (!days || days < 0) { alert('올바른 연차 일수를 입력해주세요.'); return; }
+  if (!confirm(\`\${fiscal_year}년도 전체 직원에게 \${days}일을 부여하시겠습니까?\n\${overwrite ? '⚠️ 이미 부여된 직원도 덮어씁니다.' : 'ⓘ 이미 부여된 직원은 건너뜁니다.'}\`)) return;
+
+  msgEl.classList.add('hidden');
+  const res = await api('POST', '/settings/leave-grants/bulk', { fiscal_year, days, overwrite });
   if (res.error) {
     msgEl.textContent = res.error; msgEl.className = 'mt-3 text-sm text-red-500'; msgEl.classList.remove('hidden'); return;
   }
-  msgEl.textContent = res.updated + '명의 연차가 ' + days + '일로 변경되었습니다.';
+  msgEl.innerHTML = \`<i class="fas fa-check-circle mr-1"></i>
+    완료! 부여/수정: <strong>\${res.inserted}명</strong>\${res.skipped > 0 ? ', 건너뜀: ' + res.skipped + '명' : ''} (총 \${res.total}명)\`;
   msgEl.className = 'mt-3 text-sm text-green-600';
   msgEl.classList.remove('hidden');
+  // 카드 목록 새로고침 (granted_count 업데이트)
+  setTimeout(() => {
+    closeFYGrantModal();
+    renderAnnualLeaveTab(document.getElementById('settings-tab-content'));
+  }, 1500);
+}
+
+// ── 개별 부여일수 수정 모달 ─────────────────────
+function openGrantEditModal(id, name, days, note) {
+  document.getElementById('grant-edit-modal').classList.remove('hidden');
+  document.getElementById('grant-edit-id').value = id;
+  document.getElementById('grant-edit-name').textContent = name + ' 님의 연차를 수정합니다.';
+  document.getElementById('grant-edit-days').value = days;
+  document.getElementById('grant-edit-note').value = note || '';
+  document.getElementById('grant-edit-err').classList.add('hidden');
+}
+
+function closeGrantEditModal() {
+  document.getElementById('grant-edit-modal').classList.add('hidden');
+}
+
+async function saveGrantEdit() {
+  const id = document.getElementById('grant-edit-id').value;
+  const granted_days = Number(document.getElementById('grant-edit-days').value);
+  const note = document.getElementById('grant-edit-note').value.trim();
+  const errEl = document.getElementById('grant-edit-err');
+
+  if (isNaN(granted_days) || granted_days < 0) {
+    errEl.textContent = '올바른 일수를 입력해주세요.'; errEl.classList.remove('hidden'); return;
+  }
+
+  const res = await api('PUT', '/settings/leave-grants/' + id, { granted_days, note });
+  if (res.error) { errEl.textContent = res.error; errEl.classList.remove('hidden'); return; }
+
+  closeGrantEditModal();
+  openFYGrantDetail(fySelectedYear);
 }
 
 // ── 시스템 설정 탭 ──────────────────────────────
