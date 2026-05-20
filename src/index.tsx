@@ -949,6 +949,7 @@ function openAddUserModal() {
 
 async function openEditUserModal(id) {
   const u = await api('GET', '/users/' + id);
+  const hireDate = u.hire_date ? u.hire_date.substring(0, 10) : '';
   openModal('직원 정보 수정', \`
     <form id="edit-user-form" class="space-y-4">
       <div class="grid grid-cols-2 gap-3">
@@ -956,37 +957,32 @@ async function openEditUserModal(id) {
         <div><label class="text-xs font-medium text-slate-600 block mb-1">연락처</label><input name="phone" value="\${u.phone||''}" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" /></div>
       </div>
       <div class="grid grid-cols-2 gap-3">
-        <div><label class="text-xs font-medium text-slate-600 block mb-1">부서</label>
-          <select name="department" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm">
-            <option \${u.department==='경영지원'?'selected':''}>경영지원</option>
-            <option \${u.department==='개발팀'?'selected':''}>개발팀</option>
-            <option \${u.department==='디자인팀'?'selected':''}>디자인팀</option>
-            <option \${u.department==='마케팅팀'?'selected':''}>마케팅팀</option>
-            <option \${u.department==='인사팀'?'selected':''}>인사팀</option>
-            <option \${u.department==='영업팀'?'selected':''}>영업팀</option>
+        <div>
+          <label class="text-xs font-medium text-slate-600 block mb-1">부서</label>
+          <select id="hr-edit-dept" name="department" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm">
+            <option value="">-- 불러오는 중... --</option>
           </select>
         </div>
-        <div><label class="text-xs font-medium text-slate-600 block mb-1">직급</label>
-          <select name="position" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm">
-            <option \${u.position==='인턴'?'selected':''}>인턴</option>
-            <option \${u.position==='사원'?'selected':''}>사원</option>
-            <option \${u.position==='주임'?'selected':''}>주임</option>
-            <option \${u.position==='대리'?'selected':''}>대리</option>
-            <option \${u.position==='과장'?'selected':''}>과장</option>
-            <option \${u.position==='차장'?'selected':''}>차장</option>
-            <option \${u.position==='부장'?'selected':''}>부장</option>
-            <option \${u.position==='이사'?'selected':''}>이사</option>
-            <option \${u.position==='선임'?'selected':''}>선임</option>
+        <div>
+          <label class="text-xs font-medium text-slate-600 block mb-1">직급</label>
+          <select id="hr-edit-pos" name="position" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm">
+            <option value="">-- 불러오는 중... --</option>
           </select>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-3">
-        <div><label class="text-xs font-medium text-slate-600 block mb-1">입사일</label><input name="hire_date" type="date" value="\${u.hire_date}" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" /></div>
+        <div>
+          <label class="text-xs font-medium text-slate-600 block mb-1">입사일</label>
+          <input id="hr-edit-hire" name="hire_date" type="date" value="\${hireDate}" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" />
+        </div>
         <div><label class="text-xs font-medium text-slate-600 block mb-1">연차 총일수</label><input name="annual_leave_total" type="number" value="\${u.annual_leave_total}" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" /></div>
       </div>
       <button type="submit" class="w-full bg-indigo-600 text-white rounded-lg py-2.5 font-semibold hover:bg-indigo-700 transition">저장</button>
     </form>
   \`);
+
+  // 부서·직급 드롭다운을 설정 DB에서 동적으로 채우기
+  await loadHREditDeptPosSelects(u.department, u.position);
 
   document.getElementById('edit-user-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -999,6 +995,52 @@ async function openEditUserModal(id) {
     showToast('직원 정보가 수정되었습니다.');
     renderHR(document.getElementById('page-content'));
   });
+}
+
+async function loadHREditDeptPosSelects(currentDept, currentPos) {
+  const [depts, positions] = await Promise.all([
+    api('GET', '/settings/departments'),
+    api('GET', '/settings/positions')
+  ]);
+
+  const deptSel = document.getElementById('hr-edit-dept');
+  const posSel  = document.getElementById('hr-edit-pos');
+
+  // 부서 드롭다운
+  deptSel.innerHTML = '<option value="">-- 부서 선택 --</option>';
+  (depts || []).forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d.name;
+    opt.textContent = d.name;
+    if (d.name === currentDept) opt.selected = true;
+    deptSel.appendChild(opt);
+  });
+  // DB에 없는 기존 값 fallback
+  if (currentDept && !(depts || []).find(d => d.name === currentDept)) {
+    const opt = document.createElement('option');
+    opt.value = currentDept;
+    opt.textContent = currentDept + ' (기존값)';
+    opt.selected = true;
+    deptSel.appendChild(opt);
+  }
+
+  // 직급 드롭다운
+  posSel.innerHTML = '<option value="">-- 직급 선택 --</option>';
+  (positions || []).forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    if (p.name === currentPos) opt.selected = true;
+    posSel.appendChild(opt);
+  });
+  // DB에 없는 기존 값 fallback
+  if (currentPos && !(positions || []).find(p => p.name === currentPos)) {
+    const opt = document.createElement('option');
+    opt.value = currentPos;
+    opt.textContent = currentPos + ' (기존값)';
+    opt.selected = true;
+    posSel.appendChild(opt);
+  }
 }
 
 async function deleteUser(id) {
