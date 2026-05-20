@@ -161,17 +161,21 @@ app.get('*', (c) => {
     </div>
 
     <nav class="flex-1 px-3 py-4 space-y-1">
-      <button onclick="navigate('hr')" class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="hr">
+      <button onclick="navigate('hr')" id="menu-hr"
+        class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="hr">
         <i class="fas fa-users w-4 text-center"></i> 인사 관리
       </button>
-      <button onclick="navigate('leave')" class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="leave">
+      <button onclick="navigate('leave')" id="menu-leave"
+        class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="leave">
         <i class="fas fa-calendar-check w-4 text-center"></i> 연차 관리
         <span id="pending-badge" class="ml-auto badge" style="background:rgba(255,255,255,.2);color:#fff;display:none"></span>
       </button>
-      <button onclick="navigate('notice')" class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="notice">
+      <button onclick="navigate('notice')" id="menu-notice"
+        class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="notice">
         <i class="fas fa-bullhorn w-4 text-center"></i> 공지사항
       </button>
-      <button onclick="navigate('chat')" class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="chat">
+      <button onclick="navigate('chat')" id="menu-chat"
+        class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="chat">
         <i class="fas fa-comments w-4 text-center"></i> 사내 메신저
         <span id="unread-badge" class="ml-auto badge" style="background:rgba(255,100,100,.8);color:#fff;display:none"></span>
       </button>
@@ -343,19 +347,45 @@ async function initApp() {
   document.getElementById('nav-dept').textContent = currentUser.department + ' · ' + currentUser.position;
   document.getElementById('nav-initial').textContent = currentUser.name[0];
 
+  // 일반 직원이면 인사관리 메뉴 비활성화
+  const hrMenu = document.getElementById('menu-hr');
+  if (hrMenu) {
+    if (currentUser.role !== 'admin') {
+      hrMenu.disabled = true;
+      hrMenu.classList.add('opacity-40', 'cursor-not-allowed');
+      hrMenu.classList.remove('hover:bg-white/15');
+      hrMenu.onclick = null;
+      hrMenu.title = '관리자만 접근 가능합니다';
+    } else {
+      hrMenu.disabled = false;
+      hrMenu.classList.remove('opacity-40', 'cursor-not-allowed');
+    }
+  }
+
+  // 새로고침 시 마지막 페이지 복원, 없으면 기본 페이지
+  const savedPage = sessionStorage.getItem('currentPage');
+  const defaultPage = currentUser.role === 'admin' ? 'hr' : 'leave';
+  const startPage = savedPage || defaultPage;
+  // 일반 직원이 hr 페이지 저장돼있으면 기본으로 이동
+  const goPage = (startPage === 'hr' && currentUser.role !== 'admin') ? 'leave' : startPage;
+
   startUnreadPolling();
-  navigate('hr');
+  navigate(goPage);
 }
 
 // ==================== 네비게이션 ====================
 function navigate(page) {
   const sidebar = document.getElementById('sidebar');
-  // 이미 활성화된 메뉴를 다시 클릭하면 사이드바 토글 (모바일/데스크탑 공통)
+  // 일반 직원 hr 페이지 접근 차단
+  if (page === 'hr' && currentUser && currentUser.role !== 'admin') return;
+  // 이미 활성화된 메뉴를 다시 클릭하면 사이드바 토글
   if (currentPage === page) {
     sidebar?.classList.toggle('open');
     return;
   }
   currentPage = page;
+  // 현재 페이지 세션에 저장 (새로고침 복원용)
+  sessionStorage.setItem('currentPage', page);
   document.querySelectorAll('.sidebar-link[data-page]').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page);
   });
