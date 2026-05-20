@@ -29,6 +29,31 @@ app.get('/api/settings/public', async (c) => {
   return c.json(map)
 })
 
+// ── 공개 데이터 API (인증 불필요 - Apps Script / 외부 연동용) ──────
+// 직원 목록
+app.get('/api/public/employees', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, name, employee_id, department, position FROM users ORDER BY department, name'
+  ).all()
+  return c.json(results)
+})
+
+// 부서 목록
+app.get('/api/public/departments', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, name FROM departments ORDER BY name'
+  ).all()
+  return c.json(results)
+})
+
+// 직급 목록
+app.get('/api/public/positions', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, name FROM positions ORDER BY name'
+  ).all()
+  return c.json(results)
+})
+
 // API 라우트
 app.route('/api/auth', auth)
 app.route('/api/users', users)
