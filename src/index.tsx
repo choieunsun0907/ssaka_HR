@@ -3219,13 +3219,17 @@ async function renderSettingsEmployees(container) {
             </div>
             <div>
               <label class="block text-xs font-semibold text-gray-600 mb-1">부서 <span class="text-red-500">*</span></label>
-              <input id="semp-dept" type="text" placeholder="개발팀"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              <select id="semp-dept"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <option value="">-- 부서 선택 --</option>
+              </select>
             </div>
             <div>
               <label class="block text-xs font-semibold text-gray-600 mb-1">직급 <span class="text-red-500">*</span></label>
-              <input id="semp-pos" type="text" placeholder="사원"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              <select id="semp-pos"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <option value="">-- 직급 선택 --</option>
+              </select>
             </div>
             <div>
               <label class="block text-xs font-semibold text-gray-600 mb-1">입사일 <span class="text-red-500">*</span></label>
@@ -3356,7 +3360,7 @@ function filterSettingsEmp(dept) {
   \`).join('');
 }
 
-function openSettingsAddUser() {
+async function openSettingsAddUser() {
   document.getElementById('semp-modal').classList.remove('hidden');
   document.getElementById('semp-modal-title').textContent = '직원 추가';
   document.getElementById('semp-edit-id').value = '';
@@ -3364,17 +3368,16 @@ function openSettingsAddUser() {
   document.getElementById('semp-name').value = '';
   document.getElementById('semp-email').value = '';
   document.getElementById('semp-password').value = '';
-  document.getElementById('semp-dept').value = '';
-  document.getElementById('semp-pos').value = '';
   document.getElementById('semp-hire').value = '';
   document.getElementById('semp-phone').value = '';
   document.getElementById('semp-annual').value = 15;
   document.getElementById('semp-role').value = 'employee';
   document.getElementById('semp-pw-wrap').style.display = '';
   document.getElementById('semp-modal-err').classList.add('hidden');
+  await loadDeptPosSelects('', '');
 }
 
-function openSettingsEditUser(id) {
+async function openSettingsEditUser(id) {
   const u = settingsEmpList.find(x => x.id === id);
   if (!u) return;
   document.getElementById('semp-modal').classList.remove('hidden');
@@ -3383,14 +3386,60 @@ function openSettingsEditUser(id) {
   document.getElementById('semp-empid').value = u.employee_id;
   document.getElementById('semp-name').value = u.name;
   document.getElementById('semp-email').value = u.email;
-  document.getElementById('semp-dept').value = u.department;
-  document.getElementById('semp-pos').value = u.position;
   document.getElementById('semp-hire').value = u.hire_date;
   document.getElementById('semp-phone').value = u.phone || '';
   document.getElementById('semp-annual').value = u.annual_leave_total;
   document.getElementById('semp-role').value = u.role;
-  document.getElementById('semp-pw-wrap').style.display = 'none'; // 수정 시 비번 필드 숨김
+  document.getElementById('semp-pw-wrap').style.display = 'none';
   document.getElementById('semp-modal-err').classList.add('hidden');
+  await loadDeptPosSelects(u.department, u.position);
+}
+
+// 부서/직급 select 옵션을 API에서 실시간 로드하는 헬퍼
+async function loadDeptPosSelects(currentDept, currentPos) {
+  const [depts, positions] = await Promise.all([
+    api('GET', '/settings/departments'),
+    api('GET', '/settings/positions')
+  ]);
+
+  const deptSel = document.getElementById('semp-dept');
+  const posSel  = document.getElementById('semp-pos');
+
+  // 부서 드롭다운 채우기
+  deptSel.innerHTML = '<option value="">-- 부서 선택 --</option>';
+  (depts || []).forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d.name;
+    opt.textContent = d.name;
+    if (d.name === currentDept) opt.selected = true;
+    deptSel.appendChild(opt);
+  });
+  // DB에 없는 기존 값이면 직접 추가 (데이터 무결성 유지)
+  if (currentDept && !(depts || []).find(d => d.name === currentDept)) {
+    const opt = document.createElement('option');
+    opt.value = currentDept;
+    opt.textContent = currentDept + ' (기존값)';
+    opt.selected = true;
+    deptSel.appendChild(opt);
+  }
+
+  // 직급 드롭다운 채우기
+  posSel.innerHTML = '<option value="">-- 직급 선택 --</option>';
+  (positions || []).forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    if (p.name === currentPos) opt.selected = true;
+    posSel.appendChild(opt);
+  });
+  // DB에 없는 기존 값이면 직접 추가
+  if (currentPos && !(positions || []).find(p => p.name === currentPos)) {
+    const opt = document.createElement('option');
+    opt.value = currentPos;
+    opt.textContent = currentPos + ' (기존값)';
+    opt.selected = true;
+    posSel.appendChild(opt);
+  }
 }
 
 function closeSempModal() {
