@@ -82,7 +82,7 @@ app.get('*', (c) => {
     <div class="mb-5">
       <p class="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">테스트 계정으로 빠른 로그인</p>
       <div class="grid grid-cols-2 gap-2">
-        <button type="button" onclick="quickLogin('admin@company.com','admin123')"
+        <button type="button" onclick="fillAccount('admin@company.com','admin123', this)"
           class="quick-login-btn flex items-center gap-2.5 p-3 rounded-xl border-2 border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 transition-all text-left group">
           <div class="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center shrink-0 group-hover:bg-purple-200 transition">
             <i class="fas fa-user-shield text-purple-600 text-xs"></i>
@@ -92,7 +92,7 @@ app.get('*', (c) => {
             <div class="text-xs text-slate-400">김관리 · 경영지원</div>
           </div>
         </button>
-        <button type="button" onclick="quickLogin('dev1@company.com','pass123')"
+        <button type="button" onclick="fillAccount('dev1@company.com','pass123', this)"
           class="quick-login-btn flex items-center gap-2.5 p-3 rounded-xl border-2 border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 transition-all text-left group">
           <div class="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0 group-hover:bg-blue-200 transition">
             <i class="fas fa-user text-blue-600 text-xs"></i>
@@ -299,18 +299,22 @@ async function doLogin(email, password) {
   initApp();
 }
 
-// 빠른 로그인 (탭 클릭)
-async function quickLogin(email, password) {
-  // 버튼 로딩 표시
-  document.querySelectorAll('.quick-login-btn').forEach(btn => {
-    btn.disabled = true;
-    btn.classList.add('opacity-60');
+// 탭 클릭 → 입력창에 계정 정보 채우기
+function fillAccount(email, password, btn) {
+  // 입력창에 값 채우기
+  const emailEl = document.getElementById('login-email') as HTMLInputElement;
+  const passEl  = document.getElementById('login-password') as HTMLInputElement;
+  emailEl.value    = email;
+  passEl.value     = password;
+
+  // 선택된 탭 강조 표시
+  document.querySelectorAll('.quick-login-btn').forEach(b => {
+    b.classList.remove('border-indigo-500', 'bg-indigo-50', 'ring-2', 'ring-indigo-200');
   });
-  await doLogin(email, password);
-  document.querySelectorAll('.quick-login-btn').forEach(btn => {
-    btn.disabled = false;
-    btn.classList.remove('opacity-60');
-  });
+  btn.classList.add('border-indigo-500', 'bg-indigo-50', 'ring-2', 'ring-indigo-200');
+
+  // 비밀번호 입력창에 포커스 → 바로 엔터 칠 수 있도록
+  passEl.focus();
 }
 
 document.getElementById('login-form').addEventListener('submit', async (e) => {
