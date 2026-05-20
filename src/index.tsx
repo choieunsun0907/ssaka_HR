@@ -985,25 +985,329 @@ async function deleteUser(id) {
 }
 
 // ==================== 연차 관리 ====================
-async function renderLeave(container) {
-  container.innerHTML = \`
-    <div class="flex items-center justify-between mb-6">
-      <div>
-        <h2 class="text-xl font-bold text-slate-800">연차 관리</h2>
-        <p class="text-slate-500 text-sm mt-0.5">\${currentUser.role === 'admin' ? '전체 직원 연차 현황 및 승인 관리' : '내 연차 현황 및 신청'}</p>
-      </div>
-      \${currentUser.role !== 'admin' ? \`<button onclick="openLeaveModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i class="fas fa-plus"></i> 연차 신청</button>\` : ''}
-    </div>
-    <div id="leave-content">
-      <div class="flex justify-center py-12"><i class="fas fa-spinner fa-spin text-indigo-400 text-2xl"></i></div>
-    </div>
-  \`;
+// 관리자 연차 탭 상태
+let leaveAdminTab = 'pending'; // 'pending' | 'all' | 'history'
+let leaveFilterDept = '';
+let leaveFilterStatus = 'all';
+let leaveSearchKeyword = '';
 
+async function renderLeave(container) {
   if (currentUser.role === 'admin') {
-    await renderAdminLeave();
+    container.innerHTML = \`
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-slate-800">연차 관리</h2>
+          <p class="text-slate-500 text-sm mt-0.5">전체 직원 연차 현황 및 승인 관리</p>
+        </div>
+      </div>
+      <!-- 탭 네비게이션 -->
+      <div class="flex gap-1 bg-slate-100 p-1 rounded-xl mb-6 w-fit">
+        <button id="ltab-pending" onclick="switchLeaveTab('pending')"
+          class="px-4 py-2 rounded-lg text-sm font-medium transition">
+          <i class="fas fa-clock mr-1.5"></i>승인 대기
+          <span id="ltab-pending-badge" class="ml-1.5 bg-amber-500 text-white text-xs rounded-full px-1.5 py-0.5 hidden"></span>
+        </button>
+        <button id="ltab-all" onclick="switchLeaveTab('all')"
+          class="px-4 py-2 rounded-lg text-sm font-medium transition">
+          <i class="fas fa-users mr-1.5"></i>전체 현황
+        </button>
+        <button id="ltab-history" onclick="switchLeaveTab('history')"
+          class="px-4 py-2 rounded-lg text-sm font-medium transition">
+          <i class="fas fa-list-alt mr-1.5"></i>신청 내역
+        </button>
+      </div>
+      <div id="leave-content">
+        <div class="flex justify-center py-12"><i class="fas fa-spinner fa-spin text-indigo-400 text-2xl"></i></div>
+      </div>
+    \`;
+    switchLeaveTab(leaveAdminTab);
   } else {
+    container.innerHTML = \`
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-xl font-bold text-slate-800">연차 관리</h2>
+          <p class="text-slate-500 text-sm mt-0.5">내 연차 현황 및 신청</p>
+        </div>
+        <button onclick="openLeaveModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-2">
+          <i class="fas fa-plus"></i> 연차 신청
+        </button>
+      </div>
+      <div id="leave-content">
+        <div class="flex justify-center py-12"><i class="fas fa-spinner fa-spin text-indigo-400 text-2xl"></i></div>
+      </div>
+    \`;
     await renderMyLeave();
   }
+}
+
+function switchLeaveTab(tab) {
+  leaveAdminTab = tab;
+  const tabs = ['pending','all','history'];
+  tabs.forEach(t => {
+    const btn = document.getElementById('ltab-' + t);
+    if (!btn) return;
+    if (t === tab) {
+      btn.classList.add('bg-white','text-indigo-600','shadow-sm');
+      btn.classList.remove('text-slate-500');
+    } else {
+      btn.classList.remove('bg-white','text-indigo-600','shadow-sm');
+      btn.classList.add('text-slate-500');
+    }
+  });
+  if (tab === 'pending')      renderAdminPending();
+  else if (tab === 'all')     renderAdminAllStats();
+  else if (tab === 'history') renderAdminHistory();
+}
+
+// ── 탭1: 승인 대기 ──────────────────────────────────────────
+async function renderAdminPending() {
+  const el = document.getElementById('leave-content');
+  el.innerHTML = '<div class="flex justify-center py-12"><i class="fas fa-spinner fa-spin text-indigo-400 text-2xl"></i></div>';
+
+  const leaves = await api('GET', '/leaves?status=pending');
+  const badge = document.getElementById('ltab-pending-badge');
+  if (badge) {
+    if (leaves.length > 0) { badge.textContent = leaves.length; badge.classList.remove('hidden'); }
+    else badge.classList.add('hidden');
+  }
+  // 사이드바 배지도 업데이트
+  const sideBadge = document.getElementById('pending-badge');
+  if (sideBadge) {
+    if (leaves.length > 0) { sideBadge.textContent = leaves.length; sideBadge.style.display='inline-flex'; }
+    else sideBadge.style.display='none';
+  }
+
+  if (!leaves.length) {
+    el.innerHTML = \`
+      <div class="card p-12 text-center text-slate-400">
+        <i class="fas fa-check-circle text-4xl text-green-400 mb-3 block"></i>
+        <p class="font-medium text-slate-600">승인 대기 중인 연차가 없습니다.</p>
+      </div>
+    \`;
+    return;
+  }
+
+  let html = \`
+    <div class="card overflow-hidden">
+      <div class="px-5 py-4 border-b bg-amber-50 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-clock text-amber-500"></i>
+          <span class="font-semibold text-amber-700">승인 대기</span>
+          <span class="bg-amber-500 text-white text-xs rounded-full px-2 py-0.5">\${leaves.length}건</span>
+        </div>
+      </div>
+      <div class="divide-y">
+  \`;
+
+  leaves.forEach(l => {
+    html += \`
+      <div class="px-5 py-4" id="leave-row-\${l.id}">
+        <div class="flex items-start gap-4">
+          <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center shrink-0 mt-0.5">
+            <span class="text-indigo-600 font-bold text-sm">\${l.user_name ? l.user_name[0] : '?'}</span>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap mb-1">
+              <span class="font-semibold text-slate-800">\${l.user_name}</span>
+              <span class="text-slate-400 text-sm">\${l.department || ''} · \${l.position || ''}</span>
+              <span class="badge badge-pending text-xs">대기중</span>
+            </div>
+            <div class="flex items-center gap-3 text-sm text-slate-600 flex-wrap">
+              <span class="font-medium text-indigo-600">\${l.leave_type}</span>
+              <span>\${l.start_date} ~ \${l.end_date}</span>
+              <span class="bg-slate-100 px-2 py-0.5 rounded text-xs font-medium">\${l.days}일</span>
+              \${l.reason ? '<span class="text-slate-400">· ' + l.reason + '</span>' : ''}
+            </div>
+            <div class="text-xs text-slate-400 mt-1">신청일: \${formatDate(l.created_at)}</div>
+          </div>
+          <div class="flex gap-2 shrink-0">
+            <button onclick="approveLeave(\${l.id},'approved')"
+              class="bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-600 transition flex items-center gap-1.5">
+              <i class="fas fa-check"></i> 승인
+            </button>
+            <button onclick="openRejectModal(\${l.id})"
+              class="bg-red-100 text-red-600 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-200 transition flex items-center gap-1.5">
+              <i class="fas fa-times"></i> 반려
+            </button>
+          </div>
+        </div>
+      </div>
+    \`;
+  });
+
+  html += \`</div></div>\`;
+  el.innerHTML = html;
+}
+
+// ── 탭2: 전체 현황 ──────────────────────────────────────────
+async function renderAdminAllStats() {
+  const el = document.getElementById('leave-content');
+  el.innerHTML = '<div class="flex justify-center py-12"><i class="fas fa-spinner fa-spin text-indigo-400 text-2xl"></i></div>';
+
+  const allStats = await api('GET', '/leaves/all-stats');
+
+  // 부서 목록
+  const depts = [...new Set(allStats.map(u => u.department).filter(Boolean))];
+
+  let html = \`
+    <!-- 검색/필터 -->
+    <div class="card p-4 mb-4 flex flex-wrap gap-3 items-center">
+      <input id="lf-search" type="text" placeholder="이름 검색..." value="\${leaveSearchKeyword}"
+        oninput="leaveSearchKeyword=this.value; renderAdminAllStats()"
+        class="border border-slate-200 rounded-lg px-3 py-2 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+      <select id="lf-dept" onchange="leaveFilterDept=this.value; renderAdminAllStats()"
+        class="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+        <option value="">전체 부서</option>
+        \${depts.map(d => '<option value="' + d + '" ' + (leaveFilterDept===d?'selected':'') + '>' + d + '</option>').join('')}
+      </select>
+      <button onclick="openAdminLeaveModal()" class="ml-auto bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-2">
+        <i class="fas fa-plus"></i> 연차 직접 등록
+      </button>
+    </div>
+    <div class="card overflow-hidden">
+      <div class="px-5 py-4 border-b">
+        <h3 class="font-semibold text-slate-700">전체 직원 연차 현황</h3>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="text-left px-5 py-3 text-slate-500 font-medium">직원</th>
+              <th class="text-center px-3 py-3 text-slate-500 font-medium">총 연차</th>
+              <th class="text-center px-3 py-3 text-slate-500 font-medium">사용</th>
+              <th class="text-center px-3 py-3 text-slate-500 font-medium">대기</th>
+              <th class="text-center px-3 py-3 text-slate-500 font-medium">잔여</th>
+              <th class="text-left px-3 py-3 text-slate-500 font-medium hidden md:table-cell">사용률</th>
+              <th class="text-center px-3 py-3 text-slate-500 font-medium">상세</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+  \`;
+
+  let filtered = allStats;
+  if (leaveFilterDept) filtered = filtered.filter(u => u.department === leaveFilterDept);
+  if (leaveSearchKeyword) filtered = filtered.filter(u => u.name && u.name.includes(leaveSearchKeyword));
+
+  filtered.forEach(u => {
+    const pct = u.annual_leave_total ? Math.round((u.used_days / u.annual_leave_total) * 100) : 0;
+    const remainClass = u.remaining_days < 3 ? 'text-red-500 font-bold' : 'text-green-600 font-medium';
+    html += \`
+      <tr class="hover:bg-slate-50">
+        <td class="px-5 py-3">
+          <div class="font-medium text-slate-800">\${u.name}</div>
+          <div class="text-xs text-slate-400">\${u.department} · \${u.position}</div>
+        </td>
+        <td class="text-center px-3 py-3 text-slate-700">\${u.annual_leave_total}</td>
+        <td class="text-center px-3 py-3 text-indigo-600 font-medium">\${u.used_days}</td>
+        <td class="text-center px-3 py-3">
+          \${u.pending_days > 0 ? '<span class="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-medium">' + u.pending_days + '</span>' : '<span class="text-slate-300">-</span>'}
+        </td>
+        <td class="text-center px-3 py-3 \${remainClass}">\${u.remaining_days}</td>
+        <td class="px-3 py-3 hidden md:table-cell">
+          <div class="flex items-center gap-2">
+            <div class="leave-bar flex-1"><div class="leave-bar-fill" style="width:\${pct}%"></div></div>
+            <span class="text-xs text-slate-500 w-8">\${pct}%</span>
+          </div>
+        </td>
+        <td class="text-center px-3 py-3">
+          <button onclick="viewUserLeaves(\${u.id}, '\${u.name}')"
+            class="text-indigo-500 hover:text-indigo-700 text-xs px-2 py-1 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition">
+            내역
+          </button>
+        </td>
+      </tr>
+    \`;
+  });
+
+  if (!filtered.length) {
+    html += \`<tr><td colspan="7" class="text-center py-8 text-slate-400">해당하는 직원이 없습니다.</td></tr>\`;
+  }
+
+  html += \`</tbody></table></div></div>\`;
+  el.innerHTML = html;
+}
+
+// ── 탭3: 전체 신청 내역 ──────────────────────────────────────
+async function renderAdminHistory() {
+  const el = document.getElementById('leave-content');
+  el.innerHTML = '<div class="flex justify-center py-12"><i class="fas fa-spinner fa-spin text-indigo-400 text-2xl"></i></div>';
+
+  const leaves = await api('GET', '/leaves?status=' + (leaveFilterStatus === 'all' ? '' : leaveFilterStatus));
+
+  let html = \`
+    <div class="card p-4 mb-4 flex flex-wrap gap-3 items-center">
+      <select onchange="leaveFilterStatus=this.value; renderAdminHistory()"
+        class="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+        <option value="all" \${leaveFilterStatus==='all'?'selected':''}>전체 상태</option>
+        <option value="pending" \${leaveFilterStatus==='pending'?'selected':''}>대기</option>
+        <option value="approved" \${leaveFilterStatus==='approved'?'selected':''}>승인</option>
+        <option value="rejected" \${leaveFilterStatus==='rejected'?'selected':''}>반려</option>
+      </select>
+      <span class="text-sm text-slate-500 ml-2">총 \${leaves.length}건</span>
+    </div>
+    <div class="card overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50">
+            <tr>
+              <th class="text-left px-5 py-3 text-slate-500 font-medium">직원</th>
+              <th class="text-left px-3 py-3 text-slate-500 font-medium">종류</th>
+              <th class="text-left px-3 py-3 text-slate-500 font-medium">기간</th>
+              <th class="text-center px-3 py-3 text-slate-500 font-medium">일수</th>
+              <th class="text-center px-3 py-3 text-slate-500 font-medium">상태</th>
+              <th class="text-left px-3 py-3 text-slate-500 font-medium hidden md:table-cell">처리자</th>
+              <th class="text-center px-3 py-3 text-slate-500 font-medium">액션</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+  \`;
+
+  if (!leaves.length) {
+    html += \`<tr><td colspan="7" class="text-center py-8 text-slate-400">신청 내역이 없습니다.</td></tr>\`;
+  } else {
+    leaves.forEach(l => {
+      const statusLabel = l.status === 'pending' ? '대기' : l.status === 'approved' ? '승인' : '반려';
+      const canApprove = l.status === 'pending';
+      html += \`
+        <tr class="hover:bg-slate-50">
+          <td class="px-5 py-3">
+            <div class="font-medium text-slate-800">\${l.user_name}</div>
+            <div class="text-xs text-slate-400">\${l.department || ''}</div>
+          </td>
+          <td class="px-3 py-3 text-slate-700">\${l.leave_type}</td>
+          <td class="px-3 py-3 text-slate-600 text-xs">
+            \${l.start_date} ~ \${l.end_date}
+            \${l.reason ? '<div class="text-slate-400 mt-0.5">' + l.reason + '</div>' : ''}
+          </td>
+          <td class="text-center px-3 py-3 font-medium text-slate-700">\${l.days}일</td>
+          <td class="text-center px-3 py-3">
+            <span class="badge badge-\${l.status}">\${statusLabel}</span>
+            \${l.status === 'rejected' && l.reject_reason ? '<div class="text-xs text-red-400 mt-0.5">' + l.reject_reason + '</div>' : ''}
+          </td>
+          <td class="px-3 py-3 text-slate-500 text-xs hidden md:table-cell">
+            \${l.approver_name || '-'}
+            \${l.approved_at ? '<div class="text-slate-400">' + formatDate(l.approved_at) + '</div>' : ''}
+          </td>
+          <td class="text-center px-3 py-3">
+            \${canApprove ? \`
+              <div class="flex gap-1 justify-center">
+                <button onclick="approveLeave(\${l.id},'approved')"
+                  class="bg-green-500 text-white px-2.5 py-1 rounded text-xs font-semibold hover:bg-green-600 transition">승인</button>
+                <button onclick="openRejectModal(\${l.id})"
+                  class="bg-red-100 text-red-600 px-2.5 py-1 rounded text-xs font-semibold hover:bg-red-200 transition">반려</button>
+              </div>
+            \` : \`
+              <button onclick="adminDeleteLeave(\${l.id})"
+                class="text-slate-400 hover:text-red-500 text-xs px-2 py-1 border border-slate-200 rounded hover:border-red-300 transition">삭제</button>
+            \`}
+          </td>
+        </tr>
+      \`;
+    });
+  }
+
+  html += \`</tbody></table></div></div>\`;
+  el.innerHTML = html;
 }
 
 async function renderMyLeave() {
@@ -1034,7 +1338,7 @@ async function renderMyLeave() {
         <span class="text-sm font-bold text-indigo-600">\${pct}%</span>
       </div>
       <div class="leave-bar"><div class="leave-bar-fill" style="width:\${pct}%"></div></div>
-      \${stats.pending > 0 ? \`<p class="text-xs text-amber-600 mt-2"><i class="fas fa-clock mr-1"></i>승인 대기 중: \${stats.pending}일</p>\` : ''}
+      \${stats.pending > 0 ? '<p class="text-xs text-amber-600 mt-2"><i class="fas fa-clock mr-1"></i>승인 대기 중: ' + stats.pending + '일</p>' : ''}
     </div>
     <div class="card overflow-hidden">
       <div class="px-5 py-4 border-b flex items-center justify-between">
@@ -1048,109 +1352,24 @@ async function renderMyLeave() {
     html += \`<div class="py-12 text-center text-slate-400"><i class="fas fa-calendar-times text-3xl mb-3 block"></i>신청 내역이 없습니다.</div>\`;
   } else {
     leaves.forEach(l => {
+      const statusLabel = l.status === 'pending' ? '대기' : l.status === 'approved' ? '승인' : '반려';
       html += \`
-        <div class="flex items-center gap-4 px-5 py-4">
+        <div class="flex items-start gap-4 px-5 py-4">
           <div class="flex-1">
             <div class="flex items-center gap-2 mb-1">
               <span class="font-medium text-slate-800">\${l.leave_type}</span>
-              <span class="badge badge-\${l.status}">\${l.status === 'pending' ? '대기' : l.status === 'approved' ? '승인' : '반려'}</span>
+              <span class="badge badge-\${l.status}">\${statusLabel}</span>
             </div>
             <div class="text-slate-500 text-xs">\${l.start_date} ~ \${l.end_date} (\${l.days}일) \${l.reason ? '· ' + l.reason : ''}</div>
+            \${l.status === 'rejected' && l.reject_reason ? '<div class="text-xs text-red-400 mt-1"><i class="fas fa-comment-slash mr-1"></i>반려 사유: ' + l.reject_reason + '</div>' : ''}
           </div>
-          <div class="text-xs text-slate-400">\${formatDate(l.created_at)}</div>
-          \${l.status === 'pending' ? \`<button onclick="cancelLeave(\${l.id})" class="text-red-400 hover:text-red-600 text-xs px-2 py-1 border border-red-200 rounded-lg">취소</button>\` : ''}
+          <div class="text-xs text-slate-400 shrink-0">\${formatDate(l.created_at)}</div>
+          \${l.status === 'pending' ? '<button onclick="cancelLeave(' + l.id + ')" class="text-red-400 hover:text-red-600 text-xs px-2 py-1 border border-red-200 rounded-lg shrink-0">취소</button>' : ''}
         </div>
       \`;
     });
   }
   html += \`</div></div>\`;
-  document.getElementById('leave-content').innerHTML = html;
-}
-
-async function renderAdminLeave() {
-  const [allStats, pendingLeaves] = await Promise.all([
-    api('GET', '/leaves/all-stats'),
-    api('GET', '/leaves')
-  ]);
-
-  const pending = pendingLeaves.filter(l => l.status === 'pending');
-  // 대기 배지 업데이트
-  const badge = document.getElementById('pending-badge');
-  if (pending.length > 0) {
-    badge.textContent = pending.length;
-    badge.style.display = 'inline-flex';
-  }
-
-  let html = '';
-  if (pending.length > 0) {
-    html += \`
-      <div class="card overflow-hidden mb-6">
-        <div class="px-5 py-4 border-b bg-amber-50 flex items-center gap-2">
-          <i class="fas fa-clock text-amber-500"></i>
-          <span class="font-semibold text-amber-700">승인 대기 (\${pending.length}건)</span>
-        </div>
-        <div class="divide-y">
-    \`;
-    pending.forEach(l => {
-      html += \`
-        <div class="flex items-center gap-4 px-5 py-4">
-          <div class="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
-            <span class="text-indigo-600 font-bold text-sm">\${l.user_name[0]}</span>
-          </div>
-          <div class="flex-1">
-            <div class="font-medium text-slate-800">\${l.user_name} <span class="text-slate-400 text-sm">(\${l.department})</span></div>
-            <div class="text-slate-500 text-xs">\${l.leave_type} · \${l.start_date} ~ \${l.end_date} (\${l.days}일) \${l.reason ? '· ' + l.reason : ''}</div>
-          </div>
-          <div class="flex gap-2">
-            <button onclick="approveLeave(\${l.id},'approved')" class="bg-green-500 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-green-600 transition">승인</button>
-            <button onclick="approveLeave(\${l.id},'rejected')" class="bg-red-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-red-500 transition">반려</button>
-          </div>
-        </div>
-      \`;
-    });
-    html += \`</div></div>\`;
-  }
-
-  html += \`
-    <div class="card overflow-hidden">
-      <div class="px-5 py-4 border-b">
-        <h3 class="font-semibold text-slate-700">전체 직원 연차 현황</h3>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-50">
-            <tr>
-              <th class="text-left px-5 py-3 text-slate-500 font-medium">직원</th>
-              <th class="text-center px-3 py-3 text-slate-500 font-medium">총 연차</th>
-              <th class="text-center px-3 py-3 text-slate-500 font-medium">사용</th>
-              <th class="text-center px-3 py-3 text-slate-500 font-medium">잔여</th>
-              <th class="text-left px-3 py-3 text-slate-500 font-medium hidden md:table-cell">사용률</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y">
-  \`;
-
-  allStats.forEach(u => {
-    const pct = u.annual_leave_total ? Math.round((u.used_days / u.annual_leave_total) * 100) : 0;
-    html += \`
-      <tr class="hover:bg-slate-50 cursor-pointer" onclick="viewUserLeaves(\${u.id}, '\${u.name}')">
-        <td class="px-5 py-3">
-          <div class="font-medium text-slate-800">\${u.name}</div>
-          <div class="text-xs text-slate-400">\${u.department} · \${u.position}</div>
-        </td>
-        <td class="text-center px-3 py-3 text-slate-700">\${u.annual_leave_total}</td>
-        <td class="text-center px-3 py-3 text-indigo-600 font-medium">\${u.used_days}</td>
-        <td class="text-center px-3 py-3 \${u.remaining_days < 3 ? 'text-red-500' : 'text-green-600'} font-medium">\${u.remaining_days}</td>
-        <td class="px-3 py-3 hidden md:table-cell">
-          <div class="flex items-center gap-2">
-            <div class="leave-bar flex-1"><div class="leave-bar-fill" style="width:\${pct}%"></div></div>
-            <span class="text-xs text-slate-500 w-8">\${pct}%</span>
-          </div>
-        </td>
-      </tr>
-    \`;
-  });
-  html += \`</tbody></table></div></div>\`;
   document.getElementById('leave-content').innerHTML = html;
 }
 
@@ -1171,12 +1390,18 @@ async function viewUserLeaves(userId, name) {
     html += \`<p class="text-center text-slate-400 py-6">연차 내역이 없습니다.</p>\`;
   } else {
     leaves.forEach(l => {
+      const statusLabel = l.status === 'pending' ? '대기' : l.status === 'approved' ? '승인' : '반려';
       html += \`
-        <div class="flex items-center gap-3 p-3 bg-slate-50 rounded-lg">
+        <div class="flex items-start gap-3 p-3 bg-slate-50 rounded-lg">
           <div class="flex-1">
-            <div class="flex items-center gap-2"><span class="font-medium text-sm">\${l.leave_type}</span><span class="badge badge-\${l.status}">\${l.status === 'pending' ? '대기' : l.status === 'approved' ? '승인' : '반려'}</span></div>
-            <div class="text-xs text-slate-500">\${l.start_date} ~ \${l.end_date} (\${l.days}일)</div>
+            <div class="flex items-center gap-2">
+              <span class="font-medium text-sm">\${l.leave_type}</span>
+              <span class="badge badge-\${l.status}">\${statusLabel}</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-0.5">\${l.start_date} ~ \${l.end_date} (\${l.days}일)\${l.reason ? ' · ' + l.reason : ''}</div>
+            \${l.status === 'rejected' && l.reject_reason ? '<div class="text-xs text-red-400 mt-0.5">반려 사유: ' + l.reject_reason + '</div>' : ''}
           </div>
+          <div class="text-xs text-slate-400 shrink-0">\${formatDate(l.created_at)}</div>
         </div>
       \`;
     });
@@ -1185,6 +1410,7 @@ async function viewUserLeaves(userId, name) {
   openModal(name + ' 님의 연차 내역', html);
 }
 
+// ── 연차 신청 모달 (직원용) ─────────────────────────────────
 function openLeaveModal() {
   const today = new Date().toISOString().split('T')[0];
   openModal('연차 신청', \`
@@ -1202,13 +1428,13 @@ function openLeaveModal() {
         <select name="days" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" required>
           <option value="0.5">0.5일 (반차)</option>
           <option value="1" selected>1일</option>
-          <option value="2">2일</option>
-          <option value="3">3일</option>
-          <option value="4">4일</option>
-          <option value="5">5일</option>
+          <option value="2">2일</option><option value="3">3일</option>
+          <option value="4">4일</option><option value="5">5일</option>
         </select>
       </div>
-      <div><label class="text-xs font-medium text-slate-600 block mb-1">사유</label><textarea name="reason" rows="3" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" placeholder="연차 사유를 입력해주세요."></textarea></div>
+      <div><label class="text-xs font-medium text-slate-600 block mb-1">사유</label>
+        <textarea name="reason" rows="3" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" placeholder="연차 사유를 입력해주세요."></textarea>
+      </div>
       <div id="leave-form-error" class="text-red-500 text-sm hidden"></div>
       <button type="submit" class="w-full bg-indigo-600 text-white rounded-lg py-2.5 font-semibold hover:bg-indigo-700 transition">신청하기</button>
     </form>
@@ -1230,11 +1456,119 @@ function openLeaveModal() {
   });
 }
 
+// ── 관리자 직접 연차 등록 모달 ──────────────────────────────
+let adminLeaveUsers = [];
+async function openAdminLeaveModal() {
+  if (!adminLeaveUsers.length) {
+    const res = await api('GET', '/users');
+    adminLeaveUsers = Array.isArray(res) ? res : (res.users || []);
+  }
+  const today = new Date().toISOString().split('T')[0];
+  const userOptions = adminLeaveUsers
+    .map(u => '<option value="' + u.id + '">' + u.name + ' (' + (u.department||'') + ')</option>')
+    .join('');
+
+  openModal('연차 직접 등록 (관리자)', \`
+    <form id="admin-leave-form" class="space-y-4">
+      <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
+        <i class="fas fa-info-circle mr-1"></i>관리자가 직접 등록하는 연차는 자동으로 승인 처리됩니다.
+      </div>
+      <div>
+        <label class="text-xs font-medium text-slate-600 block mb-1">직원 선택 *</label>
+        <select name="target_user_id" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" required>
+          <option value="">-- 직원을 선택하세요 --</option>
+          \${userOptions}
+        </select>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-slate-600 block mb-1">연차 종류 *</label>
+        <select name="leave_type" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" required>
+          <option>연차</option><option>오전반차</option><option>오후반차</option><option>경조사</option><option>병가</option>
+        </select>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="text-xs font-medium text-slate-600 block mb-1">시작일 *</label><input name="start_date" type="date" value="\${today}" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" required /></div>
+        <div><label class="text-xs font-medium text-slate-600 block mb-1">종료일 *</label><input name="end_date" type="date" value="\${today}" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" required /></div>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-slate-600 block mb-1">사용 일수 *</label>
+        <select name="days" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" required>
+          <option value="0.5">0.5일 (반차)</option>
+          <option value="1" selected>1일</option>
+          <option value="2">2일</option><option value="3">3일</option>
+          <option value="4">4일</option><option value="5">5일</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-slate-600 block mb-1">사유</label>
+        <textarea name="reason" rows="2" class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" placeholder="예: 개인 사유, 경조사 등"></textarea>
+      </div>
+      <div id="admin-leave-error" class="text-red-500 text-sm hidden"></div>
+      <button type="submit" class="w-full bg-indigo-600 text-white rounded-lg py-2.5 font-semibold hover:bg-indigo-700 transition">등록 (자동 승인)</button>
+    </form>
+  \`);
+  document.getElementById('admin-leave-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const data = Object.fromEntries(fd);
+    data.days = Number(data.days);
+    data.target_user_id = Number(data.target_user_id);
+    if (!data.target_user_id) {
+      document.getElementById('admin-leave-error').textContent = '직원을 선택해주세요.';
+      document.getElementById('admin-leave-error').classList.remove('hidden');
+      return;
+    }
+    const res = await api('POST', '/leaves', data);
+    if (res.error) {
+      document.getElementById('admin-leave-error').textContent = res.error;
+      document.getElementById('admin-leave-error').classList.remove('hidden');
+      return;
+    }
+    closeModal();
+    showToast('연차가 등록되었습니다. (자동 승인)');
+    renderAdminAllStats();
+  });
+}
+
+// ── 반려 사유 모달 ──────────────────────────────────────────
+function openRejectModal(leaveId) {
+  openModal('반려 사유 입력', \`
+    <div class="space-y-4">
+      <p class="text-sm text-slate-600">반려 사유를 입력하면 직원에게 표시됩니다. (선택)</p>
+      <textarea id="reject-reason-input" rows="4"
+        class="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300"
+        placeholder="반려 사유를 입력해주세요. (미입력 시 사유 없음으로 처리)"></textarea>
+      <div class="flex gap-3">
+        <button onclick="closeModal()" class="flex-1 border border-slate-200 text-slate-600 rounded-lg py-2.5 font-semibold hover:bg-slate-50 transition">취소</button>
+        <button onclick="submitReject(\${leaveId})" class="flex-1 bg-red-500 text-white rounded-lg py-2.5 font-semibold hover:bg-red-600 transition">반려 확정</button>
+      </div>
+    </div>
+  \`);
+}
+
+async function submitReject(id) {
+  const reason = (document.getElementById('reject-reason-input').value || '').trim();
+  const res = await api('PUT', '/leaves/' + id + '/approve', { status: 'rejected', reject_reason: reason || null });
+  if (res.error) { showToast(res.error, 'error'); return; }
+  closeModal();
+  showToast('반려 처리되었습니다.');
+  switchLeaveTab(leaveAdminTab);
+}
+
 async function approveLeave(id, status) {
+  if (status === 'rejected') { openRejectModal(id); return; }
   const res = await api('PUT', '/leaves/' + id + '/approve', { status });
   if (res.error) { showToast(res.error, 'error'); return; }
-  showToast(status === 'approved' ? '승인되었습니다.' : '반려되었습니다.');
-  renderLeave(document.getElementById('page-content'));
+  showToast('승인되었습니다.');
+  switchLeaveTab(leaveAdminTab);
+}
+
+async function adminDeleteLeave(id) {
+  if (!confirm('이 연차 내역을 삭제하시겠습니까?')) return;
+  const res = await api('DELETE', '/leaves/' + id);
+  if (res.error) { showToast(res.error, 'error'); return; }
+  showToast('삭제되었습니다.');
+  renderAdminHistory();
 }
 
 async function cancelLeave(id) {
@@ -1244,6 +1578,7 @@ async function cancelLeave(id) {
   showToast('연차가 취소되었습니다.');
   renderLeave(document.getElementById('page-content'));
 }
+
 
 // ==================== 공지사항 ====================
 let noticeList = [];
