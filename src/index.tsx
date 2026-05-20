@@ -77,6 +77,40 @@ app.get('*', (c) => {
       <h1 class="text-2xl font-bold text-slate-800">사내 HR 시스템</h1>
       <p class="text-slate-500 text-sm mt-1">로그인하여 시작하세요</p>
     </div>
+
+    <!-- 테스트 계정 탭 -->
+    <div class="mb-5">
+      <p class="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">테스트 계정으로 빠른 로그인</p>
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" onclick="quickLogin('admin@company.com','admin123')"
+          class="quick-login-btn flex items-center gap-2.5 p-3 rounded-xl border-2 border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 transition-all text-left group">
+          <div class="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center shrink-0 group-hover:bg-purple-200 transition">
+            <i class="fas fa-user-shield text-purple-600 text-xs"></i>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-slate-700">관리자</div>
+            <div class="text-xs text-slate-400">김관리 · 경영지원</div>
+          </div>
+        </button>
+        <button type="button" onclick="quickLogin('dev1@company.com','pass123')"
+          class="quick-login-btn flex items-center gap-2.5 p-3 rounded-xl border-2 border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 transition-all text-left group">
+          <div class="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0 group-hover:bg-blue-200 transition">
+            <i class="fas fa-user text-blue-600 text-xs"></i>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-slate-700">일반 직원</div>
+            <div class="text-xs text-slate-400">이개발 · 개발팀</div>
+          </div>
+        </button>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3 mb-5">
+      <div class="flex-1 border-t border-slate-200"></div>
+      <span class="text-xs text-slate-400">또는 직접 입력</span>
+      <div class="flex-1 border-t border-slate-200"></div>
+    </div>
+
     <form id="login-form" class="space-y-4">
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">이메일</label>
@@ -93,9 +127,6 @@ app.get('*', (c) => {
         로그인
       </button>
     </form>
-    <p class="text-center text-xs text-slate-400 mt-6">
-      테스트 계정: admin@company.com / admin123
-    </p>
   </div>
 </div>
 
@@ -255,13 +286,9 @@ function timeAgo(d) {
 }
 
 // ==================== 인증 ====================
-document.getElementById('login-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const email = document.getElementById('login-email').value;
-  const password = document.getElementById('login-password').value;
+async function doLogin(email, password) {
   const errEl = document.getElementById('login-error');
   errEl.classList.add('hidden');
-
   const res = await api('POST', '/auth/login', { email, password });
   if (res.error) {
     errEl.textContent = res.error;
@@ -270,6 +297,27 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
   }
   currentUser = res.user;
   initApp();
+}
+
+// 빠른 로그인 (탭 클릭)
+async function quickLogin(email, password) {
+  // 버튼 로딩 표시
+  document.querySelectorAll('.quick-login-btn').forEach(btn => {
+    btn.disabled = true;
+    btn.classList.add('opacity-60');
+  });
+  await doLogin(email, password);
+  document.querySelectorAll('.quick-login-btn').forEach(btn => {
+    btn.disabled = false;
+    btn.classList.remove('opacity-60');
+  });
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = (document.getElementById('login-email') as HTMLInputElement).value;
+  const password = (document.getElementById('login-password') as HTMLInputElement).value;
+  await doLogin(email, password);
 });
 
 async function logout() {
