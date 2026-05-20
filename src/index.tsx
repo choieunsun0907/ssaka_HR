@@ -544,7 +544,7 @@ function renderHRList() {
           \${currentUser.role === 'admin' ? \`
           <div class="flex gap-1 shrink-0">
             <button onclick="openEditUserModal(\${u.id})" class="text-slate-400 hover:text-indigo-600 transition text-sm px-2 py-1"><i class="fas fa-edit"></i></button>
-            <button onclick="deleteUser(\${u.id},'\${u.name}')" class="text-slate-400 hover:text-red-500 transition text-sm px-2 py-1"><i class="fas fa-trash"></i></button>
+            <button onclick="deleteUser(\${u.id})" class="text-slate-400 hover:text-red-500 transition text-sm px-2 py-1"><i class="fas fa-trash"></i></button>
           </div>\` : ''}
         </div>
       \`;
@@ -953,8 +953,10 @@ async function openEditUserModal(id) {
   });
 }
 
-async function deleteUser(id, name) {
-  if (!confirm(\`\${name} 님을 삭제하시겠습니까?\`)) return;
+async function deleteUser(id) {
+  const user = hrAllUsers.find(u => u.id === id);
+  const name = user ? user.name : '이 직원';
+  if (!confirm(name + ' 님을 삭제하시겠습니까?\n삭제 후 복구할 수 없습니다.')) return;
   const res = await api('DELETE', '/users/' + id);
   if (res.error) { showToast(res.error, 'error'); return; }
   showToast('직원이 삭제되었습니다.');
@@ -1608,6 +1610,10 @@ async function renderSettings(container) {
           class="settings-tab px-5 py-2 rounded-lg text-sm font-medium transition-all">
           <i class="fas fa-sliders-h mr-1"></i>시스템 설정
         </button>
+        <button onclick="switchSettingsTab('employees')" id="stab-employees"
+          class="settings-tab px-5 py-2 rounded-lg text-sm font-medium transition-all">
+          <i class="fas fa-users-cog mr-1"></i>직원 관리
+        </button>
       </div>
 
       <!-- 탭 콘텐츠 -->
@@ -1619,7 +1625,7 @@ async function renderSettings(container) {
 
 function switchSettingsTab(tab) {
   settingsTab = tab;
-  const tabs = ['departments','positions','annualleave','system'];
+  const tabs = ['departments','positions','annualleave','system','employees'];
   tabs.forEach(t => {
     const el = document.getElementById('stab-' + t);
     if (!el) return;
@@ -1637,6 +1643,7 @@ function switchSettingsTab(tab) {
   else if (tab === 'positions') renderPositionsTab(content);
   else if (tab === 'annualleave') renderAnnualLeaveTab(content);
   else if (tab === 'system') renderSystemTab(content);
+  else if (tab === 'employees') renderSettingsEmployees(content);
 }
 
 // ── 부서 관리 탭 ──────────────────────────────
@@ -2419,6 +2426,354 @@ async function saveSystemSettings() {
   msgEl.className = 'text-sm text-green-600';
   msgEl.classList.remove('hidden');
   setTimeout(() => msgEl.classList.add('hidden'), 3000);
+}
+
+// ── 설정 > 직원 관리 탭 ──────────────────────────────
+let settingsEmpFilter = 'all';
+let settingsEmpList = [];
+
+async function renderSettingsEmployees(container) {
+  container.innerHTML = '<div class="text-gray-400 py-8 text-center"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div>';
+  const users = await api('GET', '/users');
+  if (users.error) { container.innerHTML = \`<p class="text-red-500">\${users.error}</p>\`; return; }
+  settingsEmpList = users;
+
+  const depts = ['all', ...new Set(users.map(u => u.department))].filter(Boolean);
+
+  container.innerHTML = \`
+    <div class="space-y-4">
+
+      <!-- 헤더 -->
+      <div class="flex flex-wrap justify-between items-center gap-3">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800"><i class="fas fa-users-cog mr-2 text-indigo-500"></i>직원 관리</h3>
+          <p class="text-xs text-gray-400 mt-0.5">직원 정보 수정, 비밀번호 초기화, 삭제를 한 곳에서 관리합니다.</p>
+        </div>
+        <button onclick="openSettingsAddUser()"
+          class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+          <i class="fas fa-plus mr-1"></i>직원 추가
+        </button>
+      </div>
+
+      <!-- 부서 필터 -->
+      <div class="flex flex-wrap gap-2">
+        \${depts.map(d => \`
+          <button onclick="filterSettingsEmp('\${escHtml(d)}')" id="semp-tab-\${d === 'all' ? 'all' : escHtml(d)}"
+            class="semp-tab px-3 py-1.5 rounded-full text-xs font-medium border transition-colors
+              \${settingsEmpFilter === d ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-400'}">
+            \${d === 'all' ? '전체' : d}
+            <span class="ml-1 opacity-70">\${d === 'all' ? users.length : users.filter(u => u.department === d).length}</span>
+          </button>
+        \`).join('')}
+      </div>
+
+      <!-- 직원 테이블 -->
+      <div class="card overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b">
+              <tr>
+                <th class="px-4 py-3 text-left text-gray-600 font-semibold">사원번호</th>
+                <th class="px-4 py-3 text-left text-gray-600 font-semibold">이름</th>
+                <th class="px-4 py-3 text-left text-gray-600 font-semibold">부서 / 직급</th>
+                <th class="px-4 py-3 text-left text-gray-600 font-semibold hidden md:table-cell">이메일</th>
+                <th class="px-4 py-3 text-center text-gray-600 font-semibold">권한</th>
+                <th class="px-4 py-3 text-center text-gray-600 font-semibold">연차</th>
+                <th class="px-4 py-3 text-center text-gray-600 font-semibold">관리</th>
+              </tr>
+            </thead>
+            <tbody id="semp-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 직원 추가/수정 모달 -->
+    <div id="semp-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-screen overflow-y-auto">
+        <div class="p-6">
+          <h4 id="semp-modal-title" class="text-lg font-bold text-gray-800 mb-5"></h4>
+          <input type="hidden" id="semp-edit-id" />
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">사원번호 <span class="text-red-500">*</span></label>
+              <input id="semp-empid" type="text" placeholder="EMP001"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">이름 <span class="text-red-500">*</span></label>
+              <input id="semp-name" type="text" placeholder="홍길동"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <div class="col-span-2">
+              <label class="block text-xs font-semibold text-gray-600 mb-1">이메일 <span class="text-red-500">*</span></label>
+              <input id="semp-email" type="email" placeholder="example@company.com"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <div id="semp-pw-wrap" class="col-span-2">
+              <label class="block text-xs font-semibold text-gray-600 mb-1">비밀번호 <span class="text-red-500">*</span></label>
+              <input id="semp-password" type="password" placeholder="초기 비밀번호"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">부서 <span class="text-red-500">*</span></label>
+              <input id="semp-dept" type="text" placeholder="개발팀"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">직급 <span class="text-red-500">*</span></label>
+              <input id="semp-pos" type="text" placeholder="사원"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">입사일 <span class="text-red-500">*</span></label>
+              <input id="semp-hire" type="date"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">연락처</label>
+              <input id="semp-phone" type="text" placeholder="010-0000-0000"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">연차 총일수</label>
+              <input id="semp-annual" type="number" min="0" max="365" value="15"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">권한</label>
+              <select id="semp-role"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <option value="employee">일반직원</option>
+                <option value="admin">관리자</option>
+              </select>
+            </div>
+          </div>
+          <div id="semp-modal-err" class="text-red-500 text-sm mt-3 hidden"></div>
+          <div class="flex gap-3 mt-5">
+            <button onclick="saveSettingsEmp()"
+              class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg font-medium transition-colors">저장</button>
+            <button onclick="closeSempModal()"
+              class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg font-medium transition-colors">취소</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 비밀번호 초기화 모달 -->
+    <div id="semp-pw-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
+      <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <h4 class="text-lg font-bold text-gray-800 mb-1">비밀번호 초기화</h4>
+        <p id="semp-pw-target" class="text-sm text-gray-500 mb-4"></p>
+        <input type="hidden" id="semp-pw-uid" />
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">새 비밀번호 <span class="text-red-500">*</span></label>
+          <input id="semp-pw-new" type="password" placeholder="새 비밀번호를 입력하세요"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        </div>
+        <div class="mt-3">
+          <label class="block text-sm font-medium text-gray-700 mb-1">비밀번호 확인</label>
+          <input id="semp-pw-confirm" type="password" placeholder="비밀번호를 다시 입력하세요"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        </div>
+        <div id="semp-pw-err" class="text-red-500 text-sm mt-3 hidden"></div>
+        <div class="flex gap-3 mt-5">
+          <button onclick="confirmResetPw()"
+            class="flex-1 bg-amber-500 hover:bg-amber-600 text-white py-2 rounded-lg font-medium transition-colors">
+            <i class="fas fa-key mr-1"></i>초기화
+          </button>
+          <button onclick="closePwModal()"
+            class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg font-medium transition-colors">취소</button>
+        </div>
+      </div>
+    </div>
+  \`;
+
+  filterSettingsEmp(settingsEmpFilter);
+}
+
+function filterSettingsEmp(dept) {
+  settingsEmpFilter = dept;
+  document.querySelectorAll('.semp-tab').forEach(btn => {
+    const isActive = btn.id === 'semp-tab-' + (dept === 'all' ? 'all' : dept);
+    if (isActive) {
+      btn.className = 'semp-tab px-3 py-1.5 rounded-full text-xs font-medium border transition-colors bg-indigo-600 text-white border-indigo-600';
+    } else {
+      btn.className = 'semp-tab px-3 py-1.5 rounded-full text-xs font-medium border transition-colors bg-white text-gray-600 border-gray-200 hover:border-indigo-400';
+    }
+  });
+  const filtered = dept === 'all' ? settingsEmpList : settingsEmpList.filter(u => u.department === dept);
+  const tbody = document.getElementById('semp-tbody');
+  if (!tbody) return;
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400 py-10">해당 부서 직원이 없습니다.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(u => \`
+    <tr class="border-t border-gray-100 hover:bg-gray-50 transition-colors" id="semp-row-\${u.id}">
+      <td class="px-4 py-3 text-gray-500 text-xs font-mono">\${u.employee_id}</td>
+      <td class="px-4 py-3">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-bold text-indigo-600 shrink-0">\${u.name[0]}</div>
+          <span class="font-medium text-gray-800">\${u.name}</span>
+        </div>
+      </td>
+      <td class="px-4 py-3 text-gray-600 text-xs">
+        <div>\${u.department}</div>
+        <div class="text-gray-400">\${u.position}</div>
+      </td>
+      <td class="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">\${u.email}</td>
+      <td class="px-4 py-3 text-center">
+        <span class="badge \${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}">
+          \${u.role === 'admin' ? '관리자' : '직원'}
+        </span>
+      </td>
+      <td class="px-4 py-3 text-center">
+        <span class="font-medium text-indigo-600">\${u.annual_leave_total}일</span>
+      </td>
+      <td class="px-4 py-3">
+        <div class="flex items-center justify-center gap-1">
+          <button onclick="openSettingsEditUser(\${u.id})"
+            title="정보 수정"
+            class="text-xs px-2 py-1 rounded border border-indigo-200 text-indigo-600 hover:bg-indigo-50 transition-colors">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="openResetPwModal(\${u.id})"
+            title="비밀번호 초기화"
+            class="text-xs px-2 py-1 rounded border border-amber-200 text-amber-600 hover:bg-amber-50 transition-colors">
+            <i class="fas fa-key"></i>
+          </button>
+          <button onclick="deleteSettingsUser(\${u.id})"
+            title="직원 삭제"
+            class="text-xs px-2 py-1 rounded border border-red-200 text-red-500 hover:bg-red-50 transition-colors">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr>
+  \`).join('');
+}
+
+function openSettingsAddUser() {
+  document.getElementById('semp-modal').classList.remove('hidden');
+  document.getElementById('semp-modal-title').textContent = '직원 추가';
+  document.getElementById('semp-edit-id').value = '';
+  document.getElementById('semp-empid').value = '';
+  document.getElementById('semp-name').value = '';
+  document.getElementById('semp-email').value = '';
+  document.getElementById('semp-password').value = '';
+  document.getElementById('semp-dept').value = '';
+  document.getElementById('semp-pos').value = '';
+  document.getElementById('semp-hire').value = '';
+  document.getElementById('semp-phone').value = '';
+  document.getElementById('semp-annual').value = 15;
+  document.getElementById('semp-role').value = 'employee';
+  document.getElementById('semp-pw-wrap').style.display = '';
+  document.getElementById('semp-modal-err').classList.add('hidden');
+}
+
+function openSettingsEditUser(id) {
+  const u = settingsEmpList.find(x => x.id === id);
+  if (!u) return;
+  document.getElementById('semp-modal').classList.remove('hidden');
+  document.getElementById('semp-modal-title').textContent = '직원 정보 수정';
+  document.getElementById('semp-edit-id').value = id;
+  document.getElementById('semp-empid').value = u.employee_id;
+  document.getElementById('semp-name').value = u.name;
+  document.getElementById('semp-email').value = u.email;
+  document.getElementById('semp-dept').value = u.department;
+  document.getElementById('semp-pos').value = u.position;
+  document.getElementById('semp-hire').value = u.hire_date;
+  document.getElementById('semp-phone').value = u.phone || '';
+  document.getElementById('semp-annual').value = u.annual_leave_total;
+  document.getElementById('semp-role').value = u.role;
+  document.getElementById('semp-pw-wrap').style.display = 'none'; // 수정 시 비번 필드 숨김
+  document.getElementById('semp-modal-err').classList.add('hidden');
+}
+
+function closeSempModal() {
+  document.getElementById('semp-modal').classList.add('hidden');
+}
+
+async function saveSettingsEmp() {
+  const id = document.getElementById('semp-edit-id').value;
+  const errEl = document.getElementById('semp-modal-err');
+  errEl.classList.add('hidden');
+
+  const employee_id    = document.getElementById('semp-empid').value.trim();
+  const name           = document.getElementById('semp-name').value.trim();
+  const email          = document.getElementById('semp-email').value.trim();
+  const password       = document.getElementById('semp-password').value;
+  const department     = document.getElementById('semp-dept').value.trim();
+  const position       = document.getElementById('semp-pos').value.trim();
+  const hire_date      = document.getElementById('semp-hire').value;
+  const phone          = document.getElementById('semp-phone').value.trim();
+  const annual_leave_total = Number(document.getElementById('semp-annual').value) || 15;
+  const role           = document.getElementById('semp-role').value;
+
+  if (!employee_id || !name || !email || !department || !position || !hire_date) {
+    errEl.textContent = '필수 항목(*)을 모두 입력해주세요.'; errEl.classList.remove('hidden'); return;
+  }
+  if (!id && !password) {
+    errEl.textContent = '비밀번호를 입력해주세요.'; errEl.classList.remove('hidden'); return;
+  }
+
+  let res;
+  if (id) {
+    // 수정
+    res = await api('PUT', '/users/' + id, { employee_id, name, email, department, position, hire_date, phone, annual_leave_total, role });
+  } else {
+    // 추가
+    res = await api('POST', '/users', { employee_id, name, email, password, department, position, hire_date, phone, annual_leave_total, role });
+  }
+
+  if (res.error) { errEl.textContent = res.error; errEl.classList.remove('hidden'); return; }
+  closeSempModal();
+  showToast(id ? '직원 정보가 수정되었습니다.' : '직원이 추가되었습니다.');
+  renderSettingsEmployees(document.getElementById('settings-tab-content'));
+}
+
+async function deleteSettingsUser(id) {
+  const u = settingsEmpList.find(x => x.id === id);
+  const name = u ? u.name : '이 직원';
+  if (!confirm(name + ' 님을 삭제하시겠습니까?\\n삭제 후 복구할 수 없습니다.')) return;
+  const res = await api('DELETE', '/users/' + id);
+  if (res.error) { showToast(res.error, 'error'); return; }
+  showToast('직원이 삭제되었습니다.');
+  renderSettingsEmployees(document.getElementById('settings-tab-content'));
+}
+
+// 비밀번호 초기화 모달
+function openResetPwModal(id) {
+  const u = settingsEmpList.find(x => x.id === id);
+  if (!u) return;
+  document.getElementById('semp-pw-modal').classList.remove('hidden');
+  document.getElementById('semp-pw-uid').value = id;
+  document.getElementById('semp-pw-target').textContent = u.name + ' (' + u.email + ') 님의 비밀번호를 초기화합니다.';
+  document.getElementById('semp-pw-new').value = '';
+  document.getElementById('semp-pw-confirm').value = '';
+  document.getElementById('semp-pw-err').classList.add('hidden');
+}
+
+function closePwModal() {
+  document.getElementById('semp-pw-modal').classList.add('hidden');
+}
+
+async function confirmResetPw() {
+  const id = document.getElementById('semp-pw-uid').value;
+  const newPw = document.getElementById('semp-pw-new').value;
+  const confirmPw = document.getElementById('semp-pw-confirm').value;
+  const errEl = document.getElementById('semp-pw-err');
+  errEl.classList.add('hidden');
+
+  if (!newPw) { errEl.textContent = '새 비밀번호를 입력해주세요.'; errEl.classList.remove('hidden'); return; }
+  if (newPw.length < 4) { errEl.textContent = '비밀번호는 4자 이상이어야 합니다.'; errEl.classList.remove('hidden'); return; }
+  if (newPw !== confirmPw) { errEl.textContent = '비밀번호가 일치하지 않습니다.'; errEl.classList.remove('hidden'); return; }
+
+  const res = await api('PUT', '/users/' + id + '/reset-password', { password: newPw });
+  if (res.error) { errEl.textContent = res.error; errEl.classList.remove('hidden'); return; }
+  closePwModal();
+  showToast('비밀번호가 초기화되었습니다.');
 }
 
 // 초기 로드: 세션 체크

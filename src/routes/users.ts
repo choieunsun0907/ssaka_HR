@@ -65,24 +65,47 @@ users.put('/:id', async (c) => {
   if (role !== 'admin' && userId !== id) return c.json({ error: '권한이 없습니다.' }, 403)
 
   const body = await c.req.json()
-  const { name, department, position, hire_date, phone, annual_leave_total } = body
+  const { employee_id, name, email, department, position, hire_date, phone, annual_leave_total } = body
+  const newRole = body.role
 
   const updates: string[] = []
   const values: any[] = []
 
   if (name) { updates.push('name = ?'); values.push(name) }
+  if (email) { updates.push('email = ?'); values.push(email) }
   if (department) { updates.push('department = ?'); values.push(department) }
   if (position) { updates.push('position = ?'); values.push(position) }
   if (hire_date) { updates.push('hire_date = ?'); values.push(hire_date) }
   if (phone !== undefined) { updates.push('phone = ?'); values.push(phone) }
-  if (annual_leave_total !== undefined && role === 'admin') { updates.push('annual_leave_total = ?'); values.push(annual_leave_total) }
+  // 관리자 전용 필드
+  if (role === 'admin') {
+    if (employee_id) { updates.push('employee_id = ?'); values.push(employee_id) }
+    if (annual_leave_total !== undefined) { updates.push('annual_leave_total = ?'); values.push(annual_leave_total) }
+    if (newRole && ['admin', 'employee'].includes(newRole)) { updates.push('role = ?'); values.push(newRole) }
+  }
 
   if (updates.length === 0) return c.json({ error: '수정할 내용이 없습니다.' }, 400)
 
   updates.push('updated_at = CURRENT_TIMESTAMP')
   values.push(id)
 
-  await c.env.DB.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run()
+  try {
+    await c.env.DB.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run()
+    return c.json({ success: true })
+  } catch (e: any) {
+    if (e.message?.includes('UNIQUE')) return c.json({ error: '이미 사용 중인 사원번호 또는 이메일입니다.' }, 409)
+    return c.json({ error: '오류가 발생했습니다.' }, 500)
+  }
+})
+
+// 비밀번호 초기화 (관리자 전용)
+users.put('/:id/reset-password', async (c) => {
+  const role = (c as any).get('userRole')
+  if (role !== 'admin') return c.json({ error: '권한이 없습니다.' }, 403)
+  const id = Number(c.req.param('id'))
+  const { password } = await c.req.json()
+  if (!password || password.length < 4) return c.json({ error: '비밀번호는 4자 이상이어야 합니다.' }, 400)
+  await c.env.DB.prepare('UPDATE users SET password=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(password, id).run()
   return c.json({ success: true })
 })
 
