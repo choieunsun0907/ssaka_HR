@@ -36,6 +36,7 @@ app.get('*', (c) => {
   <title>사내 HR 시스템</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body { font-family: 'Pretendard', 'Apple SD Gothic Neo', sans-serif; }
@@ -375,32 +376,96 @@ function renderPage(page) {
 }
 
 // ==================== 인사 관리 ====================
+let hrAllUsers = [];
+let hrFilterDept = 'all';
+let hrChecked = new Set();
+
 async function renderHR(container) {
+  hrChecked = new Set();
+  const users = await api('GET', '/users');
+  if (users.error) { container.innerHTML = \`<p class="text-red-500">\${users.error}</p>\`; return; }
+  hrAllUsers = users;
+
+  // 부서 목록 추출
+  const depts = [...new Set(users.map(u => u.department))].sort();
+
   container.innerHTML = \`
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
       <div>
         <h2 class="text-xl font-bold text-slate-800">인사 관리</h2>
         <p class="text-slate-500 text-sm mt-0.5">구성원 정보 조회 및 관리</p>
       </div>
-      \${currentUser.role === 'admin' ? \`<button onclick="openAddUserModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-2"><i class="fas fa-plus"></i> 직원 추가</button>\` : ''}
+      \${currentUser.role === 'admin' ? \`
+      <div class="flex flex-wrap gap-2">
+        <button onclick="downloadChecked()" id="btn-download" class="hidden bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition flex items-center gap-2">
+          <i class="fas fa-file-excel"></i> 선택 다운로드 (<span id="checked-count">0</span>명)
+        </button>
+        <button onclick="openExcelUploadModal()" class="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold hover:bg-slate-50 transition flex items-center gap-2">
+          <i class="fas fa-upload text-green-600"></i> 엑셀 업로드
+        </button>
+        <button onclick="openAddUserModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-2">
+          <i class="fas fa-plus"></i> 직원 추가
+        </button>
+      </div>\` : ''}
     </div>
+
+    <!-- 팀별 필터 탭 -->
+    <div class="flex flex-wrap gap-2 mb-5" id="dept-filter">
+      <button onclick="setDeptFilter('all')" class="dept-tab px-4 py-1.5 rounded-full text-sm font-medium transition border \${hrFilterDept==='all' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}">
+        전체 <span class="ml-1 text-xs opacity-70">\${users.length}</span>
+      </button>
+      \${depts.map(d => \`
+        <button onclick="setDeptFilter('\${d}')" class="dept-tab px-4 py-1.5 rounded-full text-sm font-medium transition border \${hrFilterDept===d ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}">
+          \${d} <span class="ml-1 text-xs opacity-70">\${users.filter(u=>u.department===d).length}</span>
+        </button>
+      \`).join('')}
+    </div>
+
+    <div id="hr-list"></div>
   \`;
 
-  const users = await api('GET', '/users');
-  if (users.error) { container.innerHTML += \`<p class="text-red-500">\${users.error}</p>\`; return; }
+  renderHRList();
+}
+
+function setDeptFilter(dept) {
+  hrFilterDept = dept;
+  // 탭 스타일 업데이트
+  document.querySelectorAll('.dept-tab').forEach(btn => {
+    const isActive = btn.textContent.trim().startsWith(dept === 'all' ? '전체' : dept);
+    btn.className = \`dept-tab px-4 py-1.5 rounded-full text-sm font-medium transition border \${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}\`;
+  });
+  renderHRList();
+}
+
+function renderHRList() {
+  const listEl = document.getElementById('hr-list');
+  if (!listEl) return;
+
+  const filtered = hrFilterDept === 'all'
+    ? hrAllUsers
+    : hrAllUsers.filter(u => u.department === hrFilterDept);
+
+  if (!filtered.length) {
+    listEl.innerHTML = \`<div class="card py-16 text-center text-slate-400"><i class="fas fa-users text-4xl mb-3 block"></i>해당 부서 직원이 없습니다.</div>\`;
+    return;
+  }
 
   // 부서별 그룹핑
-  const depts = {};
-  users.forEach(u => {
-    if (!depts[u.department]) depts[u.department] = [];
-    depts[u.department].push(u);
+  const deptMap = {};
+  filtered.forEach(u => {
+    if (!deptMap[u.department]) deptMap[u.department] = [];
+    deptMap[u.department].push(u);
   });
 
-  let html = \`<div class="space-y-6">\`;
-  for (const [dept, members] of Object.entries(depts)) {
+  let html = \`<div class="space-y-5">\`;
+  for (const [dept, members] of Object.entries(deptMap)) {
     html += \`
       <div class="card overflow-hidden">
         <div class="px-5 py-3 bg-slate-50 border-b flex items-center gap-2">
+          \${currentUser.role === 'admin' ? \`
+          <input type="checkbox" class="dept-check rounded border-slate-300 text-indigo-600"
+            onchange="toggleDeptCheck('\${dept}', this.checked)"
+            title="\${dept} 전체 선택" />\` : ''}
           <i class="fas fa-layer-group text-indigo-500 text-sm"></i>
           <span class="font-semibold text-slate-700 text-sm">\${dept}</span>
           <span class="text-slate-400 text-xs">\${members.length}명</span>
@@ -409,29 +474,34 @@ async function renderHR(container) {
     \`;
     members.forEach(u => {
       html += \`
-        <div class="flex items-center gap-4 px-5 py-4 hover:bg-slate-50 transition cursor-pointer" onclick="openUserDetail(\${u.id})">
-          <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
-            <span class="text-indigo-600 font-bold">\${u.name[0]}</span>
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="font-semibold text-slate-800">\${u.name}</span>
-              <span class="badge \${u.role === 'admin' ? 'badge-admin' : 'badge-employee'}">\${u.role === 'admin' ? '관리자' : '직원'}</span>
+        <div class="flex items-center gap-3 px-5 py-4 hover:bg-slate-50 transition" id="hr-row-\${u.id}">
+          \${currentUser.role === 'admin' ? \`
+          <input type="checkbox" class="user-check rounded border-slate-300 text-indigo-600 shrink-0"
+            data-id="\${u.id}" onchange="toggleUserCheck(\${u.id}, this.checked)" \${hrChecked.has(u.id) ? 'checked' : ''} />\` : ''}
+          <div class="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onclick="openUserDetail(\${u.id})">
+            <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+              <span class="text-indigo-600 font-bold">\${u.name[0]}</span>
             </div>
-            <div class="text-slate-500 text-xs mt-0.5">\${u.position} · \${u.employee_id}</div>
-          </div>
-          <div class="text-right hidden sm:block">
-            <div class="text-slate-500 text-xs">입사일</div>
-            <div class="text-slate-700 text-sm">\${formatDate(u.hire_date)}</div>
-          </div>
-          <div class="text-right hidden md:block">
-            <div class="text-slate-500 text-xs">연락처</div>
-            <div class="text-slate-700 text-sm">\${u.phone || '-'}</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="font-semibold text-slate-800">\${u.name}</span>
+                <span class="badge \${u.role === 'admin' ? 'badge-admin' : 'badge-employee'}">\${u.role === 'admin' ? '관리자' : '직원'}</span>
+              </div>
+              <div class="text-slate-500 text-xs mt-0.5">\${u.position} · \${u.employee_id}</div>
+            </div>
+            <div class="text-right hidden sm:block shrink-0">
+              <div class="text-slate-500 text-xs">입사일</div>
+              <div class="text-slate-700 text-sm">\${formatDate(u.hire_date)}</div>
+            </div>
+            <div class="text-right hidden md:block shrink-0">
+              <div class="text-slate-500 text-xs">연락처</div>
+              <div class="text-slate-700 text-sm">\${u.phone || '-'}</div>
+            </div>
           </div>
           \${currentUser.role === 'admin' ? \`
-          <div class="flex gap-2 shrink-0">
-            <button onclick="event.stopPropagation();openEditUserModal(\${u.id})" class="text-slate-400 hover:text-indigo-600 transition text-sm px-2"><i class="fas fa-edit"></i></button>
-            <button onclick="event.stopPropagation();deleteUser(\${u.id},'\${u.name}')" class="text-slate-400 hover:text-red-500 transition text-sm px-2"><i class="fas fa-trash"></i></button>
+          <div class="flex gap-1 shrink-0">
+            <button onclick="openEditUserModal(\${u.id})" class="text-slate-400 hover:text-indigo-600 transition text-sm px-2 py-1"><i class="fas fa-edit"></i></button>
+            <button onclick="deleteUser(\${u.id},'\${u.name}')" class="text-slate-400 hover:text-red-500 transition text-sm px-2 py-1"><i class="fas fa-trash"></i></button>
           </div>\` : ''}
         </div>
       \`;
@@ -439,7 +509,249 @@ async function renderHR(container) {
     html += \`</div></div>\`;
   }
   html += \`</div>\`;
-  container.innerHTML += html;
+  listEl.innerHTML = html;
+}
+
+// 체크박스 관리
+function toggleUserCheck(id, checked) {
+  if (checked) hrChecked.add(id); else hrChecked.delete(id);
+  updateDownloadBtn();
+}
+function toggleDeptCheck(dept, checked) {
+  hrAllUsers.filter(u => u.department === dept).forEach(u => {
+    if (checked) hrChecked.add(u.id); else hrChecked.delete(u.id);
+    const cb = document.querySelector(\`.user-check[data-id="\${u.id}"]\`);
+    if (cb) cb.checked = checked;
+  });
+  updateDownloadBtn();
+}
+function updateDownloadBtn() {
+  const btn = document.getElementById('btn-download');
+  const cnt = document.getElementById('checked-count');
+  if (!btn) return;
+  if (hrChecked.size > 0) {
+    btn.classList.remove('hidden');
+    btn.classList.add('flex');
+    if (cnt) cnt.textContent = hrChecked.size;
+  } else {
+    btn.classList.add('hidden');
+    btn.classList.remove('flex');
+  }
+}
+
+// ── 엑셀 다운로드 ──
+function downloadChecked() {
+  const rows = hrChecked.size > 0
+    ? hrAllUsers.filter(u => hrChecked.has(u.id))
+    : hrAllUsers;
+
+  const headers = ['사원번호','이름','이메일','부서','직급','입사일','연락처','권한','연차총일수'];
+  const data = [headers, ...rows.map(u => [
+    u.employee_id, u.name, u.email, u.department, u.position,
+    u.hire_date, u.phone||'', u.role==='admin'?'관리자':'직원', u.annual_leave_total
+  ])];
+
+  // SheetJS로 엑셀 생성
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  // 열 너비 설정
+  ws['!cols'] = [10,8,24,10,8,12,14,8,10].map(w=>({wch:w}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '직원목록');
+  XLSX.writeFile(wb, \`직원목록_\${new Date().toISOString().slice(0,10)}.xlsx\`);
+  showToast(\`\${rows.length}명 다운로드 완료\`);
+}
+
+// ── 엑셀 업로드 모달 ──
+function openExcelUploadModal() {
+  openModal('엑셀로 직원 일괄 추가', \`
+    <div class="space-y-4">
+      <!-- 양식 다운로드 -->
+      <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3">
+        <i class="fas fa-info-circle text-blue-500 mt-0.5"></i>
+        <div class="flex-1 text-sm text-blue-700">
+          <p class="font-semibold mb-1">엑셀 업로드 양식 안내</p>
+          <p class="text-xs text-blue-600">아래 양식을 다운로드 후 작성하여 업로드해 주세요.</p>
+          <button onclick="downloadTemplate()" class="mt-2 text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition flex items-center gap-1.5 w-fit">
+            <i class="fas fa-download"></i> 양식 다운로드 (.xlsx)
+          </button>
+        </div>
+      </div>
+
+      <!-- 컬럼 설명 -->
+      <div class="bg-slate-50 rounded-xl p-3 text-xs text-slate-600">
+        <p class="font-semibold mb-1.5 text-slate-700">필수 컬럼 (1행: 헤더)</p>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-1">
+          <span>• <b>사원번호</b> (예: EMP007)</span>
+          <span>• <b>이름</b></span>
+          <span>• <b>이메일</b></span>
+          <span>• <b>비밀번호</b></span>
+          <span>• <b>부서</b> (예: 개발팀)</span>
+          <span>• <b>직급</b> (예: 대리)</span>
+          <span>• <b>입사일</b> (예: 2024-01-15)</span>
+          <span>• 연락처 (선택)</span>
+          <span>• 연차총일수 (기본 15)</span>
+        </div>
+      </div>
+
+      <!-- 파일 업로드 -->
+      <div id="upload-drop"
+        class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:border-indigo-400 hover:bg-indigo-50/30 transition cursor-pointer"
+        onclick="document.getElementById('excel-file-input').click()"
+        ondragover="event.preventDefault();this.classList.add('border-indigo-400','bg-indigo-50')"
+        ondragleave="this.classList.remove('border-indigo-400','bg-indigo-50')"
+        ondrop="handleExcelDrop(event)">
+        <i class="fas fa-file-excel text-green-500 text-3xl mb-2 block"></i>
+        <p class="text-sm font-medium text-slate-700">클릭하거나 파일을 끌어다 놓으세요</p>
+        <p class="text-xs text-slate-400 mt-1">.xlsx, .xls 파일만 지원</p>
+      </div>
+      <input type="file" id="excel-file-input" accept=".xlsx,.xls" class="hidden" onchange="handleExcelFile(this.files[0])" />
+
+      <!-- 미리보기 영역 -->
+      <div id="excel-preview" class="hidden"></div>
+    </div>
+  \`);
+}
+
+function downloadTemplate() {
+  const headers = ['사원번호','이름','이메일','비밀번호','부서','직급','입사일','연락처','연차총일수'];
+  const sample  = ['EMP007','홍길동','hong@company.com','pass123','개발팀','대리','2024-01-15','010-1234-5678',15];
+  const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
+  ws['!cols'] = [12,8,24,12,10,8,12,14,10].map(w=>({wch:w}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '직원추가양식');
+  XLSX.writeFile(wb, '직원추가_양식.xlsx');
+}
+
+function handleExcelDrop(e) {
+  e.preventDefault();
+  document.getElementById('upload-drop').classList.remove('border-indigo-400','bg-indigo-50');
+  const file = e.dataTransfer.files[0];
+  if (file) handleExcelFile(file);
+}
+
+function handleExcelFile(file) {
+  if (!file) return;
+  if (!new RegExp('\\.xlsx?$','i').test(file.name)) { showToast('xlsx 또는 xls 파일만 지원합니다.','error'); return; }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const wb = XLSX.read(e.target.result, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+    if (rows.length < 2) { showToast('데이터가 없습니다.','error'); return; }
+
+    const header = rows[0].map(h => String(h).trim());
+    const colMap = {
+      employee_id:        header.findIndex(h => h.includes('사원번호')),
+      name:               header.findIndex(h => h === '이름'),
+      email:              header.findIndex(h => h.includes('이메일')),
+      password:           header.findIndex(h => h.includes('비밀번호')),
+      department:         header.findIndex(h => h.includes('부서')),
+      position:           header.findIndex(h => h.includes('직급')),
+      hire_date:          header.findIndex(h => h.includes('입사일')),
+      phone:              header.findIndex(h => h.includes('연락처')),
+      annual_leave_total: header.findIndex(h => h.includes('연차')),
+    };
+
+    const required = ['employee_id','name','email','password','department','position','hire_date'];
+    const missing = required.filter(k => colMap[k] === -1);
+    if (missing.length) { showToast('필수 컬럼 누락: ' + missing.join(', '),'error'); return; }
+
+    const data = rows.slice(1).filter(r => r.some(c => c !== '')).map(r => ({
+      employee_id:        String(r[colMap.employee_id]||'').trim(),
+      name:               String(r[colMap.name]||'').trim(),
+      email:              String(r[colMap.email]||'').trim(),
+      password:           String(r[colMap.password]||'').trim(),
+      department:         String(r[colMap.department]||'').trim(),
+      position:           String(r[colMap.position]||'').trim(),
+      hire_date:          formatExcelDate(r[colMap.hire_date]),
+      phone:              colMap.phone !== -1 ? String(r[colMap.phone]||'').trim() : '',
+      annual_leave_total: colMap.annual_leave_total !== -1 ? Number(r[colMap.annual_leave_total])||15 : 15,
+    }));
+
+    showExcelPreview(data);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function formatExcelDate(val) {
+  if (!val) return '';
+  // 엑셀 날짜 숫자 처리
+  if (typeof val === 'number') {
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return d.toISOString().slice(0,10);
+  }
+  return String(val).trim().replace(/[./]/g, '-');
+}
+
+function showExcelPreview(data) {
+  const prev = document.getElementById('excel-preview');
+  if (!prev) return;
+  prev.classList.remove('hidden');
+
+  let html = \`
+    <div class="border border-slate-200 rounded-xl overflow-hidden">
+      <div class="px-4 py-3 bg-slate-50 border-b flex items-center justify-between">
+        <span class="text-sm font-semibold text-slate-700">미리보기 — \${data.length}명</span>
+        <button onclick="submitExcelUpload(\${JSON.stringify(data).replace(/"/g,'&quot;')})"
+          class="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-1.5">
+          <i class="fas fa-upload"></i> 일괄 등록
+        </button>
+      </div>
+      <div class="overflow-x-auto max-h-60 overflow-y-auto">
+        <table class="w-full text-xs">
+          <thead class="bg-slate-100 sticky top-0">
+            <tr>
+              <th class="px-3 py-2 text-left text-slate-500 font-medium">사원번호</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-medium">이름</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-medium">부서</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-medium">직급</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-medium">입사일</th>
+              <th class="px-3 py-2 text-left text-slate-500 font-medium">이메일</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            \${data.map(r => \`
+              <tr class="hover:bg-slate-50">
+                <td class="px-3 py-2 text-slate-700">\${r.employee_id}</td>
+                <td class="px-3 py-2 font-medium text-slate-800">\${r.name}</td>
+                <td class="px-3 py-2 text-slate-600">\${r.department}</td>
+                <td class="px-3 py-2 text-slate-600">\${r.position}</td>
+                <td class="px-3 py-2 text-slate-600">\${r.hire_date}</td>
+                <td class="px-3 py-2 text-slate-500">\${r.email}</td>
+              </tr>
+            \`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  \`;
+  prev.innerHTML = html;
+}
+
+async function submitExcelUpload(dataStr) {
+  let data;
+  try { data = typeof dataStr === 'string' ? JSON.parse(dataStr) : dataStr; } catch(e) { showToast('데이터 오류','error'); return; }
+
+  const btn = document.querySelector('#excel-preview button');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 등록 중...'; }
+
+  let ok = 0, fail = 0, failList = [];
+  for (const user of data) {
+    const res = await api('POST', '/users', user);
+    if (res.error) { fail++; failList.push(user.name + '(' + res.error + ')'); }
+    else ok++;
+  }
+
+  closeModal();
+  if (fail > 0) {
+    showToast(\`\${ok}명 등록 완료, \${fail}명 실패\`, 'error');
+    console.warn('실패 목록:', failList);
+  } else {
+    showToast(\`\${ok}명 일괄 등록 완료!\`);
+  }
+  renderHR(document.getElementById('page-content'));
 }
 
 async function openUserDetail(id) {
