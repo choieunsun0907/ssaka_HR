@@ -6,6 +6,7 @@ import users from './routes/users'
 import leaves from './routes/leaves'
 import notices from './routes/notices'
 import messages from './routes/messages'
+import settingsRoute from './routes/settings'
 
 type Bindings = { DB: D1Database }
 
@@ -19,6 +20,7 @@ app.route('/api/users', users)
 app.route('/api/leaves', leaves)
 app.route('/api/notices', notices)
 app.route('/api/messages', messages)
+app.route('/api/settings', settingsRoute)
 
 // 헬스체크
 app.get('/api/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }))
@@ -178,6 +180,11 @@ app.get('*', (c) => {
         class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="chat">
         <i class="fas fa-comments w-4 text-center"></i> 사내 메신저
         <span id="unread-badge" class="ml-auto badge" style="background:rgba(255,100,100,.8);color:#fff;display:none"></span>
+      </button>
+      <!-- 관리자 전용 설정 메뉴 -->
+      <button onclick="navigate('settings')" id="menu-settings"
+        class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="settings" style="display:none">
+        <i class="fas fa-cog w-4 text-center"></i> 설정
       </button>
     </nav>
 
@@ -361,6 +368,11 @@ async function initApp() {
       hrMenu.classList.remove('opacity-40', 'cursor-not-allowed');
     }
   }
+  // 관리자이면 설정 메뉴 표시
+  const settingsMenu = document.getElementById('menu-settings');
+  if (settingsMenu) {
+    settingsMenu.style.display = currentUser.role === 'admin' ? '' : 'none';
+  }
 
   // 새로고침 시 마지막 페이지 복원, 없으면 기본 페이지
   const savedPage = sessionStorage.getItem('currentPage');
@@ -403,6 +415,7 @@ function renderPage(page) {
   else if (page === 'leave') renderLeave(c);
   else if (page === 'notice') renderNotice(c);
   else if (page === 'chat') renderChat(c);
+  else if (page === 'settings') renderSettings(c);
 }
 
 // ==================== 인사 관리 ====================
@@ -1567,6 +1580,540 @@ function startUnreadPolling() {
       }
     }
   }, 5000);
+}
+
+// ==================== 설정 ====================
+let settingsTab = 'departments';
+
+async function renderSettings(container) {
+  container.innerHTML = \`
+    <div class="p-6">
+      <h2 class="text-2xl font-bold text-gray-800 mb-6"><i class="fas fa-cog mr-2 text-indigo-600"></i>설정</h2>
+
+      <!-- 탭 네비게이션 -->
+      <div class="flex gap-1 mb-6 bg-gray-100 p-1 rounded-xl w-fit">
+        <button onclick="switchSettingsTab('departments')" id="stab-departments"
+          class="settings-tab px-5 py-2 rounded-lg text-sm font-medium transition-all">
+          <i class="fas fa-building mr-1"></i>부서 관리
+        </button>
+        <button onclick="switchSettingsTab('positions')" id="stab-positions"
+          class="settings-tab px-5 py-2 rounded-lg text-sm font-medium transition-all">
+          <i class="fas fa-user-tag mr-1"></i>직급 관리
+        </button>
+        <button onclick="switchSettingsTab('annualleave')" id="stab-annualleave"
+          class="settings-tab px-5 py-2 rounded-lg text-sm font-medium transition-all">
+          <i class="fas fa-calendar-check mr-1"></i>연차 설정
+        </button>
+        <button onclick="switchSettingsTab('system')" id="stab-system"
+          class="settings-tab px-5 py-2 rounded-lg text-sm font-medium transition-all">
+          <i class="fas fa-sliders-h mr-1"></i>시스템 설정
+        </button>
+      </div>
+
+      <!-- 탭 콘텐츠 -->
+      <div id="settings-tab-content"></div>
+    </div>
+  \`;
+  switchSettingsTab(settingsTab);
+}
+
+function switchSettingsTab(tab) {
+  settingsTab = tab;
+  const tabs = ['departments','positions','annualleave','system'];
+  tabs.forEach(t => {
+    const el = document.getElementById('stab-' + t);
+    if (!el) return;
+    if (t === tab) {
+      el.classList.add('bg-white','shadow','text-indigo-700','font-semibold');
+      el.classList.remove('text-gray-600');
+    } else {
+      el.classList.remove('bg-white','shadow','text-indigo-700','font-semibold');
+      el.classList.add('text-gray-600');
+    }
+  });
+  const content = document.getElementById('settings-tab-content');
+  if (!content) return;
+  if (tab === 'departments') renderDeptTab(content);
+  else if (tab === 'positions') renderPositionsTab(content);
+  else if (tab === 'annualleave') renderAnnualLeaveTab(content);
+  else if (tab === 'system') renderSystemTab(content);
+}
+
+// ── 부서 관리 탭 ──────────────────────────────
+async function renderDeptTab(container) {
+  container.innerHTML = '<div class="text-gray-400 py-8 text-center"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div>';
+  const depts = await api('GET', '/settings/departments');
+  if (depts.error) { container.innerHTML = \`<p class="text-red-500">\${depts.error}</p>\`; return; }
+
+  container.innerHTML = \`
+    <div class="card p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-700"><i class="fas fa-building mr-2 text-indigo-500"></i>부서 목록</h3>
+        <button onclick="openDeptModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+          <i class="fas fa-plus mr-1"></i>부서 추가
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left text-gray-600 font-semibold rounded-tl-lg">부서명</th>
+              <th class="px-4 py-3 text-left text-gray-600 font-semibold">설명</th>
+              <th class="px-4 py-3 text-center text-gray-600 font-semibold">기본 연차</th>
+              <th class="px-4 py-3 text-center text-gray-600 font-semibold">정렬순서</th>
+              <th class="px-4 py-3 text-center text-gray-600 font-semibold rounded-tr-lg">관리</th>
+            </tr>
+          </thead>
+          <tbody id="dept-tbody">
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 부서 추가/수정 모달 -->
+    <div id="dept-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
+      <div class="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <h4 id="dept-modal-title" class="text-lg font-bold text-gray-800 mb-5"></h4>
+        <input type="hidden" id="dept-edit-id" value="" />
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">부서명 <span class="text-red-500">*</span></label>
+            <input id="dept-name" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="예) 개발팀" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">설명</label>
+            <input id="dept-desc" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="부서 설명 (선택)" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">기본 연차일수</label>
+              <input id="dept-annual" type="number" min="0" max="365" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="15" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">정렬순서</label>
+              <input id="dept-order" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="0" />
+            </div>
+          </div>
+        </div>
+        <div id="dept-modal-err" class="text-red-500 text-sm mt-3 hidden"></div>
+        <div class="flex gap-3 mt-6">
+          <button onclick="saveDept()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg font-medium transition-colors">저장</button>
+          <button onclick="closeDeptModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg font-medium transition-colors">취소</button>
+        </div>
+      </div>
+    </div>
+  \`;
+
+  // 테이블 데이터 렌더
+  const tbody = document.getElementById('dept-tbody');
+  if (!depts.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-400 py-8">등록된 부서가 없습니다.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = depts.map((d, i) => \`
+    <tr class="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+      <td class="px-4 py-3 font-medium text-gray-800"><i class="fas fa-building mr-2 text-indigo-400"></i>\${d.name}</td>
+      <td class="px-4 py-3 text-gray-500">\${d.description || '-'}</td>
+      <td class="px-4 py-3 text-center"><span class="badge bg-blue-100 text-blue-700">\${d.default_annual_leave}일</span></td>
+      <td class="px-4 py-3 text-center text-gray-500">\${d.sort_order}</td>
+      <td class="px-4 py-3 text-center">
+        <button onclick="openDeptModal(\${d.id},'\${escHtml(d.name)}','\${escHtml(d.description||'')}',\${d.default_annual_leave},\${d.sort_order})"
+          class="text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded mr-1 text-xs font-medium hover:bg-indigo-50 transition-colors">
+          <i class="fas fa-edit mr-1"></i>수정
+        </button>
+        <button onclick="deleteDept(\${d.id},'\${escHtml(d.name)}')"
+          class="text-red-500 hover:text-red-700 px-2 py-1 rounded text-xs font-medium hover:bg-red-50 transition-colors">
+          <i class="fas fa-trash mr-1"></i>삭제
+        </button>
+      </td>
+    </tr>
+  \`).join('');
+}
+
+function escHtml(str) {
+  return String(str).replace(/'/g,"&#39;").replace(/"/g,"&quot;");
+}
+
+function openDeptModal(id, name, desc, annual, order) {
+  document.getElementById('dept-modal').classList.remove('hidden');
+  document.getElementById('dept-modal-err').classList.add('hidden');
+  if (id) {
+    document.getElementById('dept-modal-title').textContent = '부서 수정';
+    document.getElementById('dept-edit-id').value = id;
+    document.getElementById('dept-name').value = name || '';
+    document.getElementById('dept-desc').value = desc || '';
+    document.getElementById('dept-annual').value = annual != null ? annual : 15;
+    document.getElementById('dept-order').value = order != null ? order : 0;
+  } else {
+    document.getElementById('dept-modal-title').textContent = '부서 추가';
+    document.getElementById('dept-edit-id').value = '';
+    document.getElementById('dept-name').value = '';
+    document.getElementById('dept-desc').value = '';
+    document.getElementById('dept-annual').value = 15;
+    document.getElementById('dept-order').value = 0;
+  }
+}
+
+function closeDeptModal() {
+  document.getElementById('dept-modal').classList.add('hidden');
+}
+
+async function saveDept() {
+  const id = document.getElementById('dept-edit-id').value;
+  const name = document.getElementById('dept-name').value.trim();
+  const desc = document.getElementById('dept-desc').value.trim();
+  const annual = Number(document.getElementById('dept-annual').value) || 15;
+  const order = Number(document.getElementById('dept-order').value) || 0;
+  const errEl = document.getElementById('dept-modal-err');
+
+  if (!name) { errEl.textContent = '부서명을 입력해주세요.'; errEl.classList.remove('hidden'); return; }
+
+  const method = id ? 'PUT' : 'POST';
+  const endpoint = id ? '/settings/departments/' + id : '/settings/departments';
+  const res = await api(method, endpoint, { name, description: desc, default_annual_leave: annual, sort_order: order });
+  if (res.error) { errEl.textContent = res.error; errEl.classList.remove('hidden'); return; }
+
+  closeDeptModal();
+  const content = document.getElementById('settings-tab-content');
+  renderDeptTab(content);
+}
+
+async function deleteDept(id, name) {
+  if (!confirm(\`"[\${name}]" 부서를 삭제하시겠습니까?\nⓘ 해당 부서에 직원이 있으면 삭제할 수 없습니다.\`)) return;
+  const res = await api('DELETE', '/settings/departments/' + id);
+  if (res.error) { alert(res.error); return; }
+  const content = document.getElementById('settings-tab-content');
+  renderDeptTab(content);
+}
+
+// ── 직급 관리 탭 ──────────────────────────────
+async function renderPositionsTab(container) {
+  container.innerHTML = '<div class="text-gray-400 py-8 text-center"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div>';
+  const positions = await api('GET', '/settings/positions');
+  if (positions.error) { container.innerHTML = \`<p class="text-red-500">\${positions.error}</p>\`; return; }
+
+  container.innerHTML = \`
+    <div class="card p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-lg font-semibold text-gray-700"><i class="fas fa-user-tag mr-2 text-indigo-500"></i>직급 목록</h3>
+        <button onclick="openPosModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+          <i class="fas fa-plus mr-1"></i>직급 추가
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left text-gray-600 font-semibold rounded-tl-lg">직급명</th>
+              <th class="px-4 py-3 text-center text-gray-600 font-semibold">레벨</th>
+              <th class="px-4 py-3 text-center text-gray-600 font-semibold">정렬순서</th>
+              <th class="px-4 py-3 text-center text-gray-600 font-semibold rounded-tr-lg">관리</th>
+            </tr>
+          </thead>
+          <tbody id="pos-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 직급 추가/수정 모달 -->
+    <div id="pos-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
+      <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <h4 id="pos-modal-title" class="text-lg font-bold text-gray-800 mb-5"></h4>
+        <input type="hidden" id="pos-edit-id" value="" />
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">직급명 <span class="text-red-500">*</span></label>
+            <input id="pos-name" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="예) 사원" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">레벨 (숫자)</label>
+              <input id="pos-level" type="number" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="1" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">정렬순서</label>
+              <input id="pos-order" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="0" />
+            </div>
+          </div>
+        </div>
+        <div id="pos-modal-err" class="text-red-500 text-sm mt-3 hidden"></div>
+        <div class="flex gap-3 mt-6">
+          <button onclick="savePos()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg font-medium transition-colors">저장</button>
+          <button onclick="closePosModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg font-medium transition-colors">취소</button>
+        </div>
+      </div>
+    </div>
+  \`;
+
+  const tbody = document.getElementById('pos-tbody');
+  if (!positions.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-gray-400 py-8">등록된 직급이 없습니다.</td></tr>';
+    return;
+  }
+
+  const levelColors = ['','bg-gray-100 text-gray-600','bg-green-100 text-green-700','bg-blue-100 text-blue-700','bg-indigo-100 text-indigo-700','bg-purple-100 text-purple-700','bg-pink-100 text-pink-700','bg-orange-100 text-orange-700','bg-red-100 text-red-700'];
+  tbody.innerHTML = positions.map(p => {
+    const colorClass = levelColors[Math.min(p.level, levelColors.length - 1)] || 'bg-gray-100 text-gray-600';
+    return \`<tr class="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+      <td class="px-4 py-3 font-medium text-gray-800"><i class="fas fa-id-badge mr-2 text-indigo-400"></i>\${p.name}</td>
+      <td class="px-4 py-3 text-center"><span class="badge \${colorClass}">Lv.\${p.level}</span></td>
+      <td class="px-4 py-3 text-center text-gray-500">\${p.sort_order}</td>
+      <td class="px-4 py-3 text-center">
+        <button onclick="openPosModal(\${p.id},'\${escHtml(p.name)}',\${p.level},\${p.sort_order})"
+          class="text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded mr-1 text-xs font-medium hover:bg-indigo-50 transition-colors">
+          <i class="fas fa-edit mr-1"></i>수정
+        </button>
+        <button onclick="deletePos(\${p.id},'\${escHtml(p.name)}')"
+          class="text-red-500 hover:text-red-700 px-2 py-1 rounded text-xs font-medium hover:bg-red-50 transition-colors">
+          <i class="fas fa-trash mr-1"></i>삭제
+        </button>
+      </td>
+    </tr>\`;
+  }).join('');
+}
+
+function openPosModal(id, name, level, order) {
+  document.getElementById('pos-modal').classList.remove('hidden');
+  document.getElementById('pos-modal-err').classList.add('hidden');
+  if (id) {
+    document.getElementById('pos-modal-title').textContent = '직급 수정';
+    document.getElementById('pos-edit-id').value = id;
+    document.getElementById('pos-name').value = name || '';
+    document.getElementById('pos-level').value = level != null ? level : 1;
+    document.getElementById('pos-order').value = order != null ? order : 0;
+  } else {
+    document.getElementById('pos-modal-title').textContent = '직급 추가';
+    document.getElementById('pos-edit-id').value = '';
+    document.getElementById('pos-name').value = '';
+    document.getElementById('pos-level').value = 1;
+    document.getElementById('pos-order').value = 0;
+  }
+}
+
+function closePosModal() {
+  document.getElementById('pos-modal').classList.add('hidden');
+}
+
+async function savePos() {
+  const id = document.getElementById('pos-edit-id').value;
+  const name = document.getElementById('pos-name').value.trim();
+  const level = Number(document.getElementById('pos-level').value) || 1;
+  const order = Number(document.getElementById('pos-order').value) || 0;
+  const errEl = document.getElementById('pos-modal-err');
+
+  if (!name) { errEl.textContent = '직급명을 입력해주세요.'; errEl.classList.remove('hidden'); return; }
+
+  const method = id ? 'PUT' : 'POST';
+  const endpoint = id ? '/settings/positions/' + id : '/settings/positions';
+  const res = await api(method, endpoint, { name, level, sort_order: order });
+  if (res.error) { errEl.textContent = res.error; errEl.classList.remove('hidden'); return; }
+
+  closePosModal();
+  const content = document.getElementById('settings-tab-content');
+  renderPositionsTab(content);
+}
+
+async function deletePos(id, name) {
+  if (!confirm(\`"[\${name}]" 직급을 삭제하시겠습니까?\`)) return;
+  const res = await api('DELETE', '/settings/positions/' + id);
+  if (res.error) { alert(res.error); return; }
+  const content = document.getElementById('settings-tab-content');
+  renderPositionsTab(content);
+}
+
+// ── 연차 설정 탭 ──────────────────────────────
+async function renderAnnualLeaveTab(container) {
+  container.innerHTML = '<div class="text-gray-400 py-8 text-center"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div>';
+  const depts = await api('GET', '/settings/departments');
+  if (depts.error) { container.innerHTML = \`<p class="text-red-500">\${depts.error}</p>\`; return; }
+
+  const deptOptions = depts.map(d => \`<option value="\${escHtml(d.name)}">\${escHtml(d.name)} (기본 \${d.default_annual_leave}일)</option>\`).join('');
+
+  container.innerHTML = \`
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+      <!-- 전체 일괄 적용 -->
+      <div class="card p-6">
+        <h3 class="text-lg font-semibold text-gray-700 mb-1"><i class="fas fa-users mr-2 text-green-500"></i>전체 직원 연차 일괄 적용</h3>
+        <p class="text-xs text-gray-400 mb-5">모든 직원의 연차 총 일수를 일괄 변경합니다.</p>
+        <div class="flex gap-3 items-end">
+          <div class="flex-1">
+            <label class="block text-sm font-medium text-gray-700 mb-1">연차 일수</label>
+            <input id="all-annual-days" type="number" min="0" max="365" value="15"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
+          </div>
+          <button onclick="applyAllAnnualLeave()"
+            class="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
+            <i class="fas fa-check mr-1"></i>전체 적용
+          </button>
+        </div>
+        <div id="all-annual-msg" class="mt-3 text-sm hidden"></div>
+      </div>
+
+      <!-- 부서별 적용 -->
+      <div class="card p-6">
+        <h3 class="text-lg font-semibold text-gray-700 mb-1"><i class="fas fa-building mr-2 text-indigo-500"></i>부서별 연차 일괄 적용</h3>
+        <p class="text-xs text-gray-400 mb-5">선택한 부서 직원들의 연차 총 일수를 일괄 변경합니다.</p>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">부서 선택</label>
+            <select id="dept-annual-select"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+              \${deptOptions}
+            </select>
+          </div>
+          <div class="flex gap-3 items-end">
+            <div class="flex-1">
+              <label class="block text-sm font-medium text-gray-700 mb-1">연차 일수</label>
+              <input id="dept-annual-days" type="number" min="0" max="365" value="15"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            </div>
+            <button onclick="applyDeptAnnualLeave()"
+              class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
+              <i class="fas fa-check mr-1"></i>부서 적용
+            </button>
+          </div>
+        </div>
+        <div id="dept-annual-msg" class="mt-3 text-sm hidden"></div>
+      </div>
+
+      <!-- 부서별 기본 연차 현황 -->
+      <div class="card p-6 md:col-span-2">
+        <h3 class="text-lg font-semibold text-gray-700 mb-4"><i class="fas fa-table mr-2 text-purple-500"></i>부서별 기본 연차 현황</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-4 py-3 text-left text-gray-600 font-semibold rounded-tl-lg">부서명</th>
+                <th class="px-4 py-3 text-center text-gray-600 font-semibold">기본 연차일수</th>
+                <th class="px-4 py-3 text-left text-gray-600 font-semibold rounded-tr-lg">설명</th>
+              </tr>
+            </thead>
+            <tbody>
+              \${depts.map(d => \`
+                <tr class="border-t border-gray-100 hover:bg-gray-50">
+                  <td class="px-4 py-3 font-medium text-gray-800"><i class="fas fa-building mr-2 text-indigo-300"></i>\${d.name}</td>
+                  <td class="px-4 py-3 text-center"><span class="badge bg-blue-100 text-blue-700">\${d.default_annual_leave}일</span></td>
+                  <td class="px-4 py-3 text-gray-500">\${d.description || '-'}</td>
+                </tr>
+              \`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  \`;
+}
+
+async function applyAllAnnualLeave() {
+  const days = Number(document.getElementById('all-annual-days').value);
+  if (!days || days < 0) { alert('올바른 연차 일수를 입력해주세요.'); return; }
+  if (!confirm(\`전체 직원의 연차를 \${days}일로 일괄 변경하시겠습니까?\`)) return;
+  const msgEl = document.getElementById('all-annual-msg');
+  msgEl.classList.add('hidden');
+  const res = await api('POST', '/settings/apply-annual-leave', { department: 'all', days });
+  if (res.error) {
+    msgEl.textContent = res.error; msgEl.className = 'mt-3 text-sm text-red-500'; msgEl.classList.remove('hidden'); return;
+  }
+  msgEl.textContent = res.updated + '명의 연차가 ' + days + '일로 변경되었습니다.';
+  msgEl.className = 'mt-3 text-sm text-green-600';
+  msgEl.classList.remove('hidden');
+}
+
+async function applyDeptAnnualLeave() {
+  const dept = document.getElementById('dept-annual-select').value;
+  const days = Number(document.getElementById('dept-annual-days').value);
+  if (!days || days < 0) { alert('올바른 연차 일수를 입력해주세요.'); return; }
+  if (!dept) { alert('부서를 선택해주세요.'); return; }
+  if (!confirm(\`[\${dept}] 부서 직원의 연차를 \${days}일로 일괄 변경하시겠습니까?\`)) return;
+  const msgEl = document.getElementById('dept-annual-msg');
+  msgEl.classList.add('hidden');
+  const res = await api('POST', '/settings/apply-annual-leave', { department: dept, days });
+  if (res.error) {
+    msgEl.textContent = res.error; msgEl.className = 'mt-3 text-sm text-red-500'; msgEl.classList.remove('hidden'); return;
+  }
+  msgEl.textContent = res.updated + '명의 연차가 ' + days + '일로 변경되었습니다.';
+  msgEl.className = 'mt-3 text-sm text-green-600';
+  msgEl.classList.remove('hidden');
+}
+
+// ── 시스템 설정 탭 ──────────────────────────────
+async function renderSystemTab(container) {
+  container.innerHTML = '<div class="text-gray-400 py-8 text-center"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div>';
+  const sys = await api('GET', '/settings/system');
+  if (sys.error) { container.innerHTML = \`<p class="text-red-500">\${sys.error}</p>\`; return; }
+
+  container.innerHTML = \`
+    <div class="card p-6 max-w-2xl">
+      <h3 class="text-lg font-semibold text-gray-700 mb-6"><i class="fas fa-sliders-h mr-2 text-indigo-500"></i>시스템 기본 설정</h3>
+      <div class="space-y-5">
+
+        <div class="pb-5 border-b border-gray-100">
+          <label class="block text-sm font-semibold text-gray-700 mb-1">회사명</label>
+          <p class="text-xs text-gray-400 mb-2">시스템 상단에 표시될 회사명입니다.</p>
+          <input id="sys-company-name" type="text" value="\${escHtml(sys.company_name || '')}"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" placeholder="예) (주)제이컴퍼니" />
+        </div>
+
+        <div class="pb-5 border-b border-gray-100">
+          <label class="block text-sm font-semibold text-gray-700 mb-1">기본 연차 일수</label>
+          <p class="text-xs text-gray-400 mb-2">신규 직원 등록 시 기본으로 부여될 연차 일수입니다.</p>
+          <div class="flex items-center gap-2">
+            <input id="sys-default-annual" type="number" min="0" max="365" value="\${sys.default_annual_leave || 15}"
+              class="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            <span class="text-sm text-gray-500">일</span>
+          </div>
+        </div>
+
+        <div class="pb-5 border-b border-gray-100">
+          <label class="block text-sm font-semibold text-gray-700 mb-1">연차 승인 방식</label>
+          <p class="text-xs text-gray-400 mb-2">연차 신청 시 처리 방식을 선택합니다.</p>
+          <div class="flex gap-4">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="sys-approve-mode" value="manual" \${(sys.leave_approval_mode || 'manual') === 'manual' ? 'checked' : ''}
+                class="text-indigo-600" />
+              <span class="text-sm text-gray-700">수동 승인 (관리자가 직접 승인)</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="sys-approve-mode" value="auto" \${sys.leave_approval_mode === 'auto' ? 'checked' : ''}
+                class="text-indigo-600" />
+              <span class="text-sm text-gray-700">자동 승인</span>
+            </label>
+          </div>
+        </div>
+
+      </div>
+      <div id="sys-save-msg" class="mt-4 text-sm hidden"></div>
+      <div class="mt-6">
+        <button onclick="saveSystemSettings()"
+          class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors">
+          <i class="fas fa-save mr-2"></i>설정 저장
+        </button>
+      </div>
+    </div>
+  \`;
+}
+
+async function saveSystemSettings() {
+  const companyName = document.getElementById('sys-company-name').value.trim();
+  const defaultAnnual = Number(document.getElementById('sys-default-annual').value) || 15;
+  const approveMode = document.querySelector('input[name="sys-approve-mode"]:checked');
+  const msgEl = document.getElementById('sys-save-msg');
+
+  const payload = {
+    company_name: companyName,
+    default_annual_leave: defaultAnnual,
+    leave_approval_mode: approveMode ? approveMode.value : 'manual'
+  };
+
+  const res = await api('PUT', '/settings/system', payload);
+  if (res.error) {
+    msgEl.textContent = res.error; msgEl.className = 'text-sm text-red-500'; msgEl.classList.remove('hidden'); return;
+  }
+  msgEl.textContent = '설정이 저장되었습니다.';
+  msgEl.className = 'text-sm text-green-600';
+  msgEl.classList.remove('hidden');
+  setTimeout(() => msgEl.classList.add('hidden'), 3000);
 }
 
 // 초기 로드: 세션 체크
