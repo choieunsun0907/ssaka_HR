@@ -685,7 +685,11 @@ function formatExcelDate(val) {
   return String(val).trim().replace(/[./]/g, '-');
 }
 
+// 전역 변수에 엑셀 데이터 저장 (onclick 속성에 데이터 직접 넣지 않음)
+let _excelUploadData = [];
+
 function showExcelPreview(data) {
+  _excelUploadData = data;  // 전역 저장
   const prev = document.getElementById('excel-preview');
   if (!prev) return;
   prev.classList.remove('hidden');
@@ -694,7 +698,7 @@ function showExcelPreview(data) {
     <div class="border border-slate-200 rounded-xl overflow-hidden">
       <div class="px-4 py-3 bg-slate-50 border-b flex items-center justify-between">
         <span class="text-sm font-semibold text-slate-700">미리보기 — \${data.length}명</span>
-        <button onclick="submitExcelUpload(\${JSON.stringify(data).replace(/"/g,'&quot;')})"
+        <button id="btn-submit-excel" onclick="submitExcelUpload()"
           class="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-1.5">
           <i class="fas fa-upload"></i> 일괄 등록
         </button>
@@ -714,12 +718,12 @@ function showExcelPreview(data) {
           <tbody class="divide-y">
             \${data.map(r => \`
               <tr class="hover:bg-slate-50">
-                <td class="px-3 py-2 text-slate-700">\${r.employee_id}</td>
-                <td class="px-3 py-2 font-medium text-slate-800">\${r.name}</td>
-                <td class="px-3 py-2 text-slate-600">\${r.department}</td>
-                <td class="px-3 py-2 text-slate-600">\${r.position}</td>
-                <td class="px-3 py-2 text-slate-600">\${r.hire_date}</td>
-                <td class="px-3 py-2 text-slate-500">\${r.email}</td>
+                <td class="px-3 py-2 text-slate-700">\${escapeHtml(r.employee_id)}</td>
+                <td class="px-3 py-2 font-medium text-slate-800">\${escapeHtml(r.name)}</td>
+                <td class="px-3 py-2 text-slate-600">\${escapeHtml(r.department)}</td>
+                <td class="px-3 py-2 text-slate-600">\${escapeHtml(r.position)}</td>
+                <td class="px-3 py-2 text-slate-600">\${escapeHtml(r.hire_date)}</td>
+                <td class="px-3 py-2 text-slate-500">\${escapeHtml(r.email)}</td>
               </tr>
             \`).join('')}
           </tbody>
@@ -730,11 +734,11 @@ function showExcelPreview(data) {
   prev.innerHTML = html;
 }
 
-async function submitExcelUpload(dataStr) {
-  let data;
-  try { data = typeof dataStr === 'string' ? JSON.parse(dataStr) : dataStr; } catch(e) { showToast('데이터 오류','error'); return; }
+async function submitExcelUpload() {
+  const data = _excelUploadData;
+  if (!data || !data.length) { showToast('등록할 데이터가 없습니다.', 'error'); return; }
 
-  const btn = document.querySelector('#excel-preview button');
+  const btn = document.getElementById('btn-submit-excel');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 등록 중...'; }
 
   let ok = 0, fail = 0, failList = [];
@@ -744,10 +748,25 @@ async function submitExcelUpload(dataStr) {
     else ok++;
   }
 
+  if (fail > 0 && ok === 0) {
+    // 전부 실패
+    const btn2 = document.getElementById('btn-submit-excel');
+    if (btn2) { btn2.disabled = false; btn2.innerHTML = '<i class="fas fa-upload"></i> 일괄 등록'; }
+    const prev = document.getElementById('excel-preview');
+    if (prev) {
+      const errDiv = document.createElement('div');
+      errDiv.className = 'mt-3 bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 space-y-1';
+      errDiv.innerHTML = '<p class="font-semibold mb-1">등록 실패 목록</p>' +
+        failList.map(f => '<p>• ' + escapeHtml(f) + '</p>').join('');
+      prev.appendChild(errDiv);
+    }
+    showToast(\`\${fail}명 등록 실패\`, 'error');
+    return;
+  }
   closeModal();
+  _excelUploadData = [];
   if (fail > 0) {
-    showToast(\`\${ok}명 등록 완료, \${fail}명 실패\`, 'error');
-    console.warn('실패 목록:', failList);
+    showToast(\`\${ok}명 등록 완료, \${fail}명 실패 (중복 제외)\`, 'error');
   } else {
     showToast(\`\${ok}명 일괄 등록 완료!\`);
   }
