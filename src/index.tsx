@@ -977,7 +977,7 @@ async function openEditUserModal(id) {
 async function deleteUser(id) {
   const user = hrAllUsers.find(u => u.id === id);
   const name = user ? user.name : '이 직원';
-  if (!confirm(name + ' 님을 삭제하시겠습니까?\n삭제 후 복구할 수 없습니다.')) return;
+  if (!confirm(name + ' 님을 삭제하시겠습니까? (삭제 후 복구 불가)')) return;
   const res = await api('DELETE', '/users/' + id);
   if (res.error) { showToast(res.error, 'error'); return; }
   showToast('직원이 삭제되었습니다.');
@@ -1812,7 +1812,7 @@ async function saveDept() {
 }
 
 async function deleteDept(id, name) {
-  if (!confirm(\`"[\${name}]" 부서를 삭제하시겠습니까?\nⓘ 해당 부서에 직원이 있으면 삭제할 수 없습니다.\`)) return;
+  if (!confirm('[' + name + '] 부서를 삭제하시겠습니까? (해당 부서에 직원이 있으면 삭제할 수 없습니다)')) return;
   const res = await api('DELETE', '/settings/departments/' + id);
   if (res.error) { alert(res.error); return; }
   const content = document.getElementById('settings-tab-content');
@@ -2291,7 +2291,7 @@ async function saveFY() {
 }
 
 async function deleteFY(id, year) {
-  if (!confirm(\`\${year}년도 회계연도를 삭제하시겠습니까?\nⓘ 연차 부여 내역이 있으면 삭제할 수 없습니다.\`)) return;
+  if (!confirm(year + '년도 회계연도를 삭제하시겠습니까? (연차 부여 내역이 있으면 삭제할 수 없습니다)')) return;
   const res = await api('DELETE', '/settings/fiscal-years/' + id);
   if (res.error) { alert(res.error); return; }
   renderAnnualLeaveTab(document.getElementById('settings-tab-content'));
@@ -2326,7 +2326,7 @@ async function bulkGrantLeave() {
   const msgEl = document.getElementById('fy-grant-msg');
 
   if (!days || days < 0) { alert('올바른 연차 일수를 입력해주세요.'); return; }
-  if (!confirm(\`\${fiscal_year}년도 전체 직원에게 \${days}일을 부여하시겠습니까?\n\${overwrite ? '⚠️ 이미 부여된 직원도 덮어씁니다.' : 'ⓘ 이미 부여된 직원은 건너뜁니다.'}\`)) return;
+  if (!confirm(fiscal_year + '년도 전체 직원에게 ' + days + '일을 부여하시겠습니까? (' + (overwrite ? '이미 부여된 직원도 덮어씁니다' : '이미 부여된 직원은 건너뜁니다') + ')')) return;
 
   msgEl.classList.add('hidden');
   const res = await api('POST', '/settings/leave-grants/bulk', { fiscal_year, days, overwrite });
@@ -2762,7 +2762,7 @@ async function saveSettingsEmp() {
 async function deleteSettingsUser(id) {
   const u = settingsEmpList.find(x => x.id === id);
   const name = u ? u.name : '이 직원';
-  if (!confirm(name + ' 님을 삭제하시겠습니까?\\n삭제 후 복구할 수 없습니다.')) return;
+  if (!confirm(name + ' 님을 삭제하시겠습니까? (삭제 후 복구 불가)')) return;
   const res = await api('DELETE', '/users/' + id);
   if (res.error) { showToast(res.error, 'error'); return; }
   showToast('직원이 삭제되었습니다.');
