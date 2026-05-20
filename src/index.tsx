@@ -14,6 +14,20 @@ const app = new Hono<{ Bindings: Bindings }>()
 
 app.use('*', cors({ origin: '*', credentials: true }))
 
+// 헬스체크
+app.get('/api/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }))
+
+// 공개 시스템 설정 (로그인 불필요) - settingsRoute 보다 반드시 먼저 등록
+app.get('/api/settings/public', async (c) => {
+  const publicKeys = ['show_test_accounts', 'login_notice', 'site_title']
+  const results = await Promise.all(
+    publicKeys.map(k => c.env.DB.prepare('SELECT key, value FROM settings WHERE key=?').bind(k).first<{key:string;value:string}>())
+  )
+  const map: Record<string, string> = {}
+  results.forEach(r => { if (r) map[r.key] = r.value })
+  return c.json(map)
+})
+
 // API 라우트
 app.route('/api/auth', auth)
 app.route('/api/users', users)
@@ -21,9 +35,6 @@ app.route('/api/leaves', leaves)
 app.route('/api/notices', notices)
 app.route('/api/messages', messages)
 app.route('/api/settings', settingsRoute)
-
-// 헬스체크
-app.get('/api/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }))
 
 // 정적 파일 서빙
 app.use('/static/*', serveStatic({ root: './public' }))
@@ -82,7 +93,7 @@ app.get('*', (c) => {
     </div>
 
     <!-- 테스트 계정 탭 -->
-    <div class="mb-5">
+    <div class="mb-5" id="login-test-section">
       <p class="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wide">테스트 계정으로 빠른 로그인</p>
       <div class="grid grid-cols-2 gap-2">
         <button type="button" onclick="fillAccount('admin@company.com','admin123', this)"
@@ -1614,6 +1625,10 @@ async function renderSettings(container) {
           class="settings-tab px-5 py-2 rounded-lg text-sm font-medium transition-all">
           <i class="fas fa-users-cog mr-1"></i>직원 관리
         </button>
+        <button onclick="switchSettingsTab('loginsettings')" id="stab-loginsettings"
+          class="settings-tab px-5 py-2 rounded-lg text-sm font-medium transition-all">
+          <i class="fas fa-sign-in-alt mr-1"></i>로그인 설정
+        </button>
       </div>
 
       <!-- 탭 콘텐츠 -->
@@ -1625,7 +1640,7 @@ async function renderSettings(container) {
 
 function switchSettingsTab(tab) {
   settingsTab = tab;
-  const tabs = ['departments','positions','annualleave','system','employees'];
+  const tabs = ['departments','positions','annualleave','system','employees','loginsettings'];
   tabs.forEach(t => {
     const el = document.getElementById('stab-' + t);
     if (!el) return;
@@ -1644,6 +1659,7 @@ function switchSettingsTab(tab) {
   else if (tab === 'annualleave') renderAnnualLeaveTab(content);
   else if (tab === 'system') renderSystemTab(content);
   else if (tab === 'employees') renderSettingsEmployees(content);
+  else if (tab === 'loginsettings') renderLoginSettings(content);
 }
 
 // ── 부서 관리 탭 ──────────────────────────────
@@ -2776,12 +2792,190 @@ async function confirmResetPw() {
   showToast('비밀번호가 초기화되었습니다.');
 }
 
-// 초기 로드: 세션 체크
+// ── 설정 > 로그인 설정 탭 ──────────────────────────────
+async function renderLoginSettings(container) {
+  container.innerHTML = '<div class="text-gray-400 py-8 text-center"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div>';
+  const sys = await api('GET', '/settings/system');
+  if (sys.error) { container.innerHTML = \`<p class="text-red-500">\${sys.error}</p>\`; return; }
+
+  const showTest    = sys.show_test_accounts !== 'false';
+  const loginNotice = sys.login_notice || '';
+  const pwMin       = sys.pw_min_length || '4';
+  const sessionTmo  = sys.session_timeout_min || '480';
+  const siteTitle   = sys.site_title || '사내 HR 시스템';
+
+  container.innerHTML = \`
+    <div class="space-y-5 max-w-2xl">
+
+      <!-- 로그인 화면 표시 설정 -->
+      <div class="card p-6">
+        <h3 class="text-base font-semibold text-gray-800 mb-4">
+          <i class="fas fa-desktop mr-2 text-indigo-500"></i>로그인 화면 설정
+        </h3>
+        <div class="space-y-5">
+
+          <div class="pb-4 border-b border-gray-100">
+            <label class="block text-sm font-semibold text-gray-700 mb-1">시스템 타이틀</label>
+            <p class="text-xs text-gray-400 mb-2">로그인 화면 및 브라우저 탭에 표시될 제목입니다.</p>
+            <input id="ls-title" type="text" value="\${escHtml(siteTitle)}"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              placeholder="사내 HR 시스템" />
+          </div>
+
+          <div class="pb-4 border-b border-gray-100">
+            <div class="flex items-center justify-between mb-2">
+              <div>
+                <label class="text-sm font-semibold text-gray-700">테스트 계정 빠른 로그인 버튼 표시</label>
+                <p class="text-xs text-gray-400 mt-0.5">로그인 화면에 테스트 계정 선택 버튼을 표시합니다.</p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="ls-show-test" class="sr-only peer" \${showTest ? 'checked' : ''} />
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+            <div id="ls-test-accounts-section" class="\${showTest ? '' : 'hidden'} mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+              <p class="text-xs font-semibold text-gray-600 mb-2">현재 표시 중인 테스트 계정</p>
+              <div id="ls-test-account-list" class="space-y-1 text-xs text-gray-600">
+                <div class="flex items-center gap-2 p-2 bg-white rounded border">
+                  <i class="fas fa-user-shield text-purple-500"></i>
+                  <span class="font-medium">관리자</span>
+                  <span class="text-gray-400">admin@company.com / admin123</span>
+                </div>
+                <div class="flex items-center gap-2 p-2 bg-white rounded border">
+                  <i class="fas fa-user text-blue-500"></i>
+                  <span class="font-medium">일반직원</span>
+                  <span class="text-gray-400">dev1@company.com / pass123</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">로그인 화면 공지 문구</label>
+            <p class="text-xs text-gray-400 mb-2">로그인 화면 하단에 표시할 공지나 안내 문구를 입력합니다. (비워두면 미표시)</p>
+            <textarea id="ls-notice" rows="2"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+              placeholder="예) 사용에 문제가 있으신 경우 인사팀으로 문의 바랍니다.">\${escHtml(loginNotice)}</textarea>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 보안 설정 -->
+      <div class="card p-6">
+        <h3 class="text-base font-semibold text-gray-800 mb-4">
+          <i class="fas fa-shield-alt mr-2 text-green-500"></i>보안 설정
+        </h3>
+        <div class="space-y-5">
+
+          <div class="pb-4 border-b border-gray-100">
+            <label class="block text-sm font-semibold text-gray-700 mb-1">비밀번호 최소 길이</label>
+            <p class="text-xs text-gray-400 mb-2">직원 비밀번호 설정 시 최소 자리 수 기준입니다.</p>
+            <div class="flex items-center gap-2">
+              <input id="ls-pw-min" type="number" min="4" max="20" value="\${pwMin}"
+                class="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              <span class="text-sm text-gray-500">자 이상</span>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">세션 자동 만료 시간</label>
+            <p class="text-xs text-gray-400 mb-2">로그인 후 일정 시간 동안 활동이 없으면 자동으로 로그아웃됩니다. 0이면 만료 없음.</p>
+            <div class="flex items-center gap-2">
+              <input id="ls-session-tmo" type="number" min="0" max="10080" value="\${sessionTmo}"
+                class="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              <span class="text-sm text-gray-500">분 (0 = 제한 없음, 480 = 8시간)</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 저장 -->
+      <div id="ls-save-msg" class="text-sm hidden"></div>
+      <button onclick="saveLoginSettings()"
+        class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg font-medium transition-colors">
+        <i class="fas fa-save mr-2"></i>설정 저장
+      </button>
+
+    </div>
+  \`;
+
+  // 토글 연동
+  document.getElementById('ls-show-test').addEventListener('change', function() {
+    const section = document.getElementById('ls-test-accounts-section');
+    if (this.checked) section.classList.remove('hidden');
+    else section.classList.add('hidden');
+  });
+}
+
+async function saveLoginSettings() {
+  const siteTitle   = document.getElementById('ls-title').value.trim();
+  const showTest    = document.getElementById('ls-show-test').checked;
+  const loginNotice = document.getElementById('ls-notice').value.trim();
+  const pwMin       = Number(document.getElementById('ls-pw-min').value) || 4;
+  const sessionTmo  = Number(document.getElementById('ls-session-tmo').value) || 0;
+  const msgEl       = document.getElementById('ls-save-msg');
+
+  const payload = {
+    site_title:          siteTitle || '사내 HR 시스템',
+    show_test_accounts:  showTest ? 'true' : 'false',
+    login_notice:        loginNotice,
+    pw_min_length:       pwMin,
+    session_timeout_min: sessionTmo
+  };
+
+  const res = await api('PUT', '/settings/system', payload);
+  if (res.error) {
+    msgEl.textContent = res.error;
+    msgEl.className = 'text-sm text-red-500';
+    msgEl.classList.remove('hidden');
+    return;
+  }
+
+  msgEl.textContent = '로그인 설정이 저장되었습니다.';
+  msgEl.className = 'text-sm text-green-600';
+  msgEl.classList.remove('hidden');
+  setTimeout(() => msgEl.classList.add('hidden'), 3000);
+
+  // 로그인 화면 테스트 계정 버튼 실시간 반영
+  const testSection = document.getElementById('login-test-section');
+  if (testSection) {
+    testSection.style.display = showTest ? '' : 'none';
+  }
+}
+
+// 초기 로드: 세션 체크 + 로그인 화면 설정 적용
 (async () => {
+  // 로그인 설정(공개 API 없이 공개 시스템 설정은 직접 반영)
+  // 테스트 계정 섹션은 기본 표시, 설정 로드 전까지 유지
   try {
-    const res = await api('GET', '/auth/me');
-    if (res.id) {
-      currentUser = res;
+    const [authRes, sysRes] = await Promise.all([
+      api('GET', '/auth/me').catch(() => null),
+      fetch('/api/settings/public').then(r => r.json()).catch(() => ({}))
+    ]);
+
+    // 로그인 화면 설정 적용
+    if (sysRes) {
+      // 테스트 계정 버튼 표시 여부
+      if (sysRes.show_test_accounts === 'false') {
+        const ts = document.getElementById('login-test-section');
+        if (ts) ts.style.display = 'none';
+      }
+      // 로그인 공지 문구
+      if (sysRes.login_notice) {
+        const loginCard = document.querySelector('#login-page .card');
+        if (loginCard) {
+          const noticeEl = document.createElement('div');
+          noticeEl.className = 'mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800';
+          noticeEl.innerHTML = '<i class="fas fa-info-circle mr-1"></i>' + sysRes.login_notice;
+          loginCard.appendChild(noticeEl);
+        }
+      }
+    }
+
+    if (authRes && authRes.id) {
+      currentUser = authRes;
       initApp();
     }
   } catch(e) {

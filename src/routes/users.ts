@@ -109,12 +109,22 @@ users.put('/:id/reset-password', async (c) => {
   return c.json({ success: true })
 })
 
-// 직원 삭제 (관리자 전용)
+// 직원 삭제 (관리자 전용) - 연관 레코드 순서대로 삭제
 users.delete('/:id', async (c) => {
   const role = (c as any).get('userRole')
   if (role !== 'admin') return c.json({ error: '권한이 없습니다.' }, 403)
-  const id = c.req.param('id')
-  await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(Number(id)).run()
+  const id = Number(c.req.param('id'))
+
+  // 본인 계정 삭제 방지
+  const myId = (c as any).get('userId')
+  if (myId === id) return c.json({ error: '본인 계정은 삭제할 수 없습니다.' }, 400)
+
+  // 연관 레코드 먼저 삭제 (FK 제약 해결)
+  await c.env.DB.prepare('DELETE FROM leave_grants WHERE user_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM leaves WHERE user_id = ? OR approved_by = ?').bind(id, id).run()
+  await c.env.DB.prepare('DELETE FROM messages WHERE sender_id = ? OR receiver_id = ?').bind(id, id).run()
+  await c.env.DB.prepare('DELETE FROM notices WHERE author_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run()
   return c.json({ success: true })
 })
 
