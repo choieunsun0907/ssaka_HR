@@ -302,8 +302,8 @@ async function doLogin(email, password) {
 // 탭 클릭 → 입력창에 계정 정보 채우기
 function fillAccount(email, password, btn) {
   // 입력창에 값 채우기
-  const emailEl = document.getElementById('login-email') as HTMLInputElement;
-  const passEl  = document.getElementById('login-password') as HTMLInputElement;
+  const emailEl = document.getElementById('login-email');
+  const passEl  = document.getElementById('login-password');
   emailEl.value    = email;
   passEl.value     = password;
 
@@ -319,8 +319,8 @@ function fillAccount(email, password, btn) {
 
 document.getElementById('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const email = (document.getElementById('login-email') as HTMLInputElement).value;
-  const password = (document.getElementById('login-password') as HTMLInputElement).value;
+  const email = document.getElementById('login-email').value;
+  const password = document.getElementById('login-password').value;
   await doLogin(email, password);
 });
 
