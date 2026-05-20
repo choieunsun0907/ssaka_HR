@@ -7,6 +7,7 @@ import leaves from './routes/leaves'
 import notices from './routes/notices'
 import messages from './routes/messages'
 import settingsRoute from './routes/settings'
+import webhookRoute from './routes/webhook'
 
 type Bindings = { DB: D1Database }
 
@@ -35,6 +36,7 @@ app.route('/api/leaves', leaves)
 app.route('/api/notices', notices)
 app.route('/api/messages', messages)
 app.route('/api/settings', settingsRoute)
+app.route('/api/webhook', webhookRoute)  // 구글 폼 연동 (인증 불필요)
 
 // 정적 파일 서빙
 app.use('/static/*', serveStatic({ root: './public' }))
