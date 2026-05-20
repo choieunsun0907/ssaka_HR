@@ -322,22 +322,32 @@ async function doLogin(email, password) {
   initApp();
 }
 
-// 탭 클릭 → 입력창에 계정 정보 채우기
-function fillAccount(email, password, btn) {
+// 테스트 계정 탭 클릭 → 입력창 채우기 + 즉시 자동 로그인
+async function fillAccount(email, password, btn) {
   // 입력창에 값 채우기
   const emailEl = document.getElementById('login-email');
   const passEl  = document.getElementById('login-password');
-  emailEl.value    = email;
-  passEl.value     = password;
+  emailEl.value = email;
+  passEl.value  = password;
 
   // 선택된 탭 강조 표시
   document.querySelectorAll('.quick-login-btn').forEach(b => {
     b.classList.remove('border-indigo-500', 'bg-indigo-50', 'ring-2', 'ring-indigo-200');
+    b.disabled = false;
   });
   btn.classList.add('border-indigo-500', 'bg-indigo-50', 'ring-2', 'ring-indigo-200');
 
-  // 비밀번호 입력창에 포커스 → 바로 엔터 칠 수 있도록
-  passEl.focus();
+  // 버튼에 로딩 표시
+  const originalHTML = btn.innerHTML;
+  btn.innerHTML = '<div class="flex items-center gap-2"><i class="fas fa-spinner fa-spin text-indigo-500"></i><span class="text-xs text-slate-600">로그인 중...</span></div>';
+  btn.disabled = true;
+
+  // 즉시 로그인 시도
+  await doLogin(email, password);
+
+  // 실패 시 버튼 복구
+  btn.innerHTML = originalHTML;
+  btn.disabled = false;
 }
 
 document.getElementById('login-form').addEventListener('submit', async (e) => {
