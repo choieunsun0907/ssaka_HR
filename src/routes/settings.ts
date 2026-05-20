@@ -268,4 +268,175 @@ settings.post('/apply-annual-leave', async (c) => {
   return c.json({ success: true, updated: cnt?.c || 0 })
 })
 
+// ── 연차 자동 부여 정책 ───────────────────────────────────────
+
+/**
+ * 입사일 기준 연차 계산 로직 (근로기준법 기반)
+ *  - 근속 1년 미만: 1개월 개근 시 1일 → 최대 11일
+ *  - 근속 1년 이상: 기본 15일 + (2년마다 1일 추가) → 최대 25일
+ *  - 3년 이상: 15 + floor((years-1)/2)일, 최대 25일
+ */
+function calcHireDateLeave(hireDate: string, referenceDate: Date, policy: Record<string, string>): number {
+  const baseDays   = Number(policy['leave_base_days']        || 15)
+  const maxDays    = Number(policy['leave_max_days']         || 25)
+  const probDays   = Number(policy['leave_probation_days']   || 11)
+  const tenureIncr = Number(policy['leave_tenure_increment'] || 1)
+  const tenureUnit = Number(policy['leave_tenure_unit']      || 2)
+
+  const hire = new Date(hireDate)
+  const ref  = referenceDate
+
+  // 근속 개월 수
+  const totalMonths =
+    (ref.getFullYear() - hire.getFullYear()) * 12 +
+    (ref.getMonth() - hire.getMonth()) +
+    (ref.getDate() >= hire.getDate() ? 0 : -1)
+
+  if (totalMonths < 0) return 0
+
+  const years = Math.floor(totalMonths / 12)
+
+  if (years < 1) {
+    // 1년 미만: 만 1개월마다 1일, 최대 probDays
+    return Math.min(totalMonths, probDays)
+  }
+
+  // 1년 이상: baseDays + 2년마다 1일 추가 (3년차부터)
+  const extra = years >= 1 ? Math.floor((years - 1) / tenureUnit) * tenureIncr : 0
+  return Math.min(baseDays + extra, maxDays)
+}
+
+/**
+ * 회계연도 기준 연차 계산 로직
+ *  - 해당 회계연도 시작일 기준으로 근속연수를 계산
+ *  - 입사일 기준 로직과 동일하게 적용
+ */
+function calcFiscalLeave(hireDate: string, fiscalYear: number, startMonth: number, policy: Record<string, string>): number {
+  // 회계연도 기준일: 해당 회계연도 시작월 1일
+  const refDate = new Date(fiscalYear, startMonth - 1, 1)
+  return calcHireDateLeave(hireDate, refDate, policy)
+}
+
+// 자동 부여 미리보기 (실제 적용 없이 결과만 반환)
+settings.post('/leave-grants/preview', async (c) => {
+  const body = await c.req.json()
+  const { fiscal_year, policy_type } = body  // policy_type: 'fiscal' | 'hire_date'
+
+  if (!fiscal_year) return c.json({ error: '회계연도를 입력해주세요.' }, 400)
+  const fy = Number(fiscal_year)
+
+  // 정책 설정 로드
+  const { results: settingsRows } = await c.env.DB.prepare('SELECT key, value FROM settings').all()
+  const policy: Record<string, string> = {}
+  ;(settingsRows as any[]).forEach(r => { policy[r.key] = r.value })
+
+  // 회계연도 정보
+  const fyInfo = await c.env.DB.prepare('SELECT * FROM fiscal_years WHERE fiscal_year=?').bind(fy).first<any>()
+  const startMonth = fyInfo?.start_month || 1
+
+  // 전체 직원 조회
+  const { results: users } = await c.env.DB.prepare(
+    'SELECT id, name, employee_id, department, position, hire_date, annual_leave_total FROM users ORDER BY department, name'
+  ).all()
+
+  const pType = policy_type || policy['leave_grant_policy'] || 'fiscal'
+  const refDate = new Date()
+
+  const preview = (users as any[]).map(u => {
+    let calculated: number
+    if (pType === 'hire_date') {
+      calculated = calcHireDateLeave(u.hire_date, refDate, policy)
+    } else {
+      calculated = calcFiscalLeave(u.hire_date, fy, startMonth, policy)
+    }
+    // 근속 년수 계산
+    const hire = new Date(u.hire_date)
+    const base = pType === 'fiscal' ? new Date(fy, startMonth - 1, 1) : refDate
+    const totalMonths = (base.getFullYear() - hire.getFullYear()) * 12 + (base.getMonth() - hire.getMonth())
+    const years  = Math.floor(Math.max(totalMonths, 0) / 12)
+    const months = Math.max(totalMonths, 0) % 12
+
+    return {
+      user_id:      u.id,
+      employee_id:  u.employee_id,
+      name:         u.name,
+      department:   u.department,
+      position:     u.position,
+      hire_date:    u.hire_date,
+      tenure_years: years,
+      tenure_months: months,
+      current_days: u.annual_leave_total,
+      calculated_days: calculated,
+      diff: calculated - u.annual_leave_total,
+    }
+  })
+
+  return c.json({ policy_type: pType, fiscal_year: fy, preview })
+})
+
+// 자동 부여 실행 (미리보기 결과 기반으로 실제 적용)
+settings.post('/leave-grants/auto-apply', async (c) => {
+  const body = await c.req.json()
+  const { fiscal_year, policy_type, overwrite } = body
+
+  if (!fiscal_year) return c.json({ error: '회계연도를 입력해주세요.' }, 400)
+  const fy = Number(fiscal_year)
+
+  // 정책 설정 로드
+  const { results: settingsRows } = await c.env.DB.prepare('SELECT key, value FROM settings').all()
+  const policy: Record<string, string> = {}
+  ;(settingsRows as any[]).forEach(r => { policy[r.key] = r.value })
+
+  // 회계연도 정보 (없으면 기본값 사용)
+  const fyInfo = await c.env.DB.prepare('SELECT * FROM fiscal_years WHERE fiscal_year=?').bind(fy).first<any>()
+  const startMonth = fyInfo?.start_month || 1
+
+  const pType = policy_type || policy['leave_grant_policy'] || 'fiscal'
+  const refDate = new Date()
+
+  // 전체 직원
+  const { results: users } = await c.env.DB.prepare('SELECT id, hire_date FROM users').all()
+
+  let inserted = 0, skipped = 0, updated = 0
+
+  for (const u of users as any[]) {
+    let days: number
+    if (pType === 'hire_date') {
+      days = calcHireDateLeave(u.hire_date, refDate, policy)
+    } else {
+      days = calcFiscalLeave(u.hire_date, fy, startMonth, policy)
+    }
+
+    // leave_grants 업서트
+    const existing = await c.env.DB.prepare(
+      'SELECT id FROM leave_grants WHERE user_id=? AND fiscal_year=?'
+    ).bind(u.id, fy).first<{id:number}>()
+
+    if (existing) {
+      if (overwrite) {
+        await c.env.DB.prepare(
+          'UPDATE leave_grants SET granted_days=?, note=?, granted_at=CURRENT_TIMESTAMP WHERE user_id=? AND fiscal_year=?'
+        ).bind(days, pType === 'fiscal' ? '회계연도기준 자동부여' : '입사일기준 자동부여', u.id, fy).run()
+        updated++
+      } else {
+        skipped++
+      }
+    } else {
+      await c.env.DB.prepare(
+        'INSERT INTO leave_grants (user_id, fiscal_year, granted_days, note) VALUES (?, ?, ?, ?)'
+      ).bind(u.id, fy, days, pType === 'fiscal' ? '회계연도기준 자동부여' : '입사일기준 자동부여').run()
+      inserted++
+    }
+    // users 테이블 동기화
+    await c.env.DB.prepare('UPDATE users SET annual_leave_total=? WHERE id=?').bind(days, u.id).run()
+  }
+
+  // 정책 설정 저장
+  await c.env.DB.prepare(
+    "INSERT INTO settings (key,value,updated_at) VALUES ('leave_grant_policy',?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at"
+  ).bind(pType).run()
+
+  return c.json({ success: true, inserted, updated, skipped, total: (users as any[]).length, policy_type: pType })
+})
+
 export default settings
