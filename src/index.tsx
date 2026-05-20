@@ -175,28 +175,30 @@ app.get('*', (c) => {
 <div id="app-layout" class="hidden flex min-h-screen">
   <!-- 사이드바 -->
   <aside id="sidebar" class="w-64 bg-indigo-700 flex flex-col shrink-0">
+    <!-- 회사명 영역 -->
     <div class="px-5 py-5 border-b border-indigo-600">
       <div class="flex items-center gap-3">
         <div class="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center">
           <i class="fas fa-building text-white text-sm"></i>
         </div>
         <div>
-          <div class="text-white font-bold text-sm leading-tight">사내 HR 시스템</div>
+          <div class="text-white font-bold text-sm leading-tight" id="nav-company-name">사내 HR 시스템</div>
           <div class="text-indigo-200 text-xs">인사관리 플랫폼</div>
         </div>
       </div>
     </div>
 
     <!-- 사용자 프로필 -->
-    <div class="px-5 py-4 border-b border-indigo-600">
+    <div class="px-4 py-3 border-b border-indigo-600" style="background:rgba(0,0,0,0.18)">
       <div class="flex items-center gap-3">
-        <div class="w-9 h-9 bg-indigo-500 rounded-full flex items-center justify-center" id="nav-avatar">
+        <div class="w-10 h-10 rounded-full flex items-center justify-center shadow-md flex-shrink-0" id="nav-avatar" style="background:linear-gradient(135deg,#6366f1,#4f46e5)">
           <span class="text-white text-sm font-bold" id="nav-initial">?</span>
         </div>
         <div class="flex-1 min-w-0">
-          <div class="text-white text-sm font-semibold truncate" id="nav-name">-</div>
-          <div class="text-indigo-200 text-xs truncate" id="nav-dept">-</div>
+          <div class="text-white text-sm font-bold truncate leading-tight" id="nav-name">-</div>
+          <div class="text-indigo-300 text-xs truncate mt-0.5" id="nav-dept">-</div>
         </div>
+        <div id="nav-role-badge" class="flex-shrink-0"></div>
       </div>
     </div>
 
@@ -240,7 +242,7 @@ app.get('*', (c) => {
       <button onclick="document.getElementById('sidebar').classList.toggle('open')" class="text-white">
         <i class="fas fa-bars text-lg"></i>
       </button>
-      <span class="text-white font-semibold">사내 HR 시스템</span>
+      <span class="text-white font-semibold" id="nav-company-mobile">사내 HR 시스템</span>
     </div>
 
     <div id="page-content" class="p-6 max-w-6xl mx-auto"></div>
@@ -402,7 +404,23 @@ async function initApp() {
   document.getElementById('nav-dept').textContent = currentUser.department + ' · ' + currentUser.position;
   document.getElementById('nav-initial').textContent = currentUser.name[0];
 
-  // 일반 직원이면 인사관리 메뉴 비활성화
+  // 역할에 따른 아바타 색상 + 배지 표시
+  const navAvatar = document.getElementById('nav-avatar');
+  if (navAvatar) {
+    navAvatar.style.background = currentUser.role === 'admin'
+      ? 'linear-gradient(135deg, #f59e0b, #d97706)'   // 관리자: 앰버 골드
+      : 'linear-gradient(135deg, #6366f1, #4f46e5)';  // 직원: 인디고
+  }
+  const navRoleBadge = document.getElementById('nav-role-badge');
+  if (navRoleBadge) {
+    if (currentUser.role === 'admin') {
+      navRoleBadge.innerHTML = '<span style="font-size:10px;background:rgba(245,158,11,0.25);color:#fcd34d;border:1px solid rgba(252,211,77,0.4);border-radius:4px;padding:1px 5px;font-weight:700;">관리자</span>';
+    } else {
+      navRoleBadge.innerHTML = '';
+    }
+  }
+
+  // 인사관리 메뉴: 관리자면 완전 활성화, 일반 직원이면 비활성화
   const hrMenu = document.getElementById('menu-hr');
   if (hrMenu) {
     if (currentUser.role !== 'admin') {
@@ -412,15 +430,32 @@ async function initApp() {
       hrMenu.onclick = null;
       hrMenu.title = '관리자만 접근 가능합니다';
     } else {
+      // 관리자: 확실하게 활성화 (이전에 비활성화된 상태 초기화)
       hrMenu.disabled = false;
+      hrMenu.removeAttribute('disabled');
       hrMenu.classList.remove('opacity-40', 'cursor-not-allowed');
+      hrMenu.onclick = function() { navigate('hr'); };
+      hrMenu.title = '';
     }
   }
+
   // 관리자이면 설정 메뉴 표시
   const settingsMenu = document.getElementById('menu-settings');
   if (settingsMenu) {
     settingsMenu.style.display = currentUser.role === 'admin' ? '' : 'none';
   }
+
+  // 회사명 로드 → 사이드바 상단 타이틀 반영
+  try {
+    const sysSettings = await api('GET', '/settings/system');
+    const companyName = sysSettings?.company_name?.trim();
+    if (companyName) {
+      const titleEl = document.getElementById('nav-company-name');
+      if (titleEl) titleEl.textContent = companyName;
+      const mobileTitle = document.getElementById('nav-company-mobile');
+      if (mobileTitle) mobileTitle.textContent = companyName;
+    }
+  } catch(e) { /* 무시 */ }
 
   // 새로고침 시 마지막 페이지 복원, 없으면 기본 페이지
   const savedPage = sessionStorage.getItem('currentPage');
