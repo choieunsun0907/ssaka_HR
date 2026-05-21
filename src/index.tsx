@@ -505,6 +505,23 @@ function renderPage(page) {
 let hrAllUsers = [];
 let hrFilterDept = 'all';
 let hrChecked = new Set();
+let hrSearchKeyword = '';
+let hrSelectedUserId = null;
+
+// 직원 아바타 배경색 팔레트
+const HR_AVATAR_COLORS = [
+  'linear-gradient(135deg,#6366f1,#4f46e5)',
+  'linear-gradient(135deg,#ec4899,#db2777)',
+  'linear-gradient(135deg,#14b8a6,#0d9488)',
+  'linear-gradient(135deg,#f59e0b,#d97706)',
+  'linear-gradient(135deg,#8b5cf6,#7c3aed)',
+  'linear-gradient(135deg,#ef4444,#dc2626)',
+  'linear-gradient(135deg,#3b82f6,#2563eb)',
+  'linear-gradient(135deg,#10b981,#059669)',
+];
+function hrAvatarColor(id) {
+  return HR_AVATAR_COLORS[(id || 0) % HR_AVATAR_COLORS.length];
+}
 
 async function renderHR(container) {
   hrChecked = new Set();
@@ -512,14 +529,14 @@ async function renderHR(container) {
   if (users.error) { container.innerHTML = \`<p class="text-red-500">\${users.error}</p>\`; return; }
   hrAllUsers = users;
 
-  // 부서 목록 추출
   const depts = [...new Set(users.map(u => u.department))].sort();
 
   container.innerHTML = \`
-    <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+    <!-- 헤더 -->
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
       <div>
         <h2 class="text-xl font-bold text-slate-800">인사 관리</h2>
-        <p class="text-slate-500 text-sm mt-0.5">구성원 정보 조회 및 관리</p>
+        <p class="text-slate-500 text-sm mt-0.5">전체 \${users.length}명 · 검색 결과 <span id="hr-result-count">\${users.length}</span>명</p>
       </div>
       \${currentUser.role === 'admin' ? \`
       <div class="flex flex-wrap gap-2">
@@ -530,112 +547,282 @@ async function renderHR(container) {
           <i class="fas fa-upload text-green-600"></i> 엑셀 업로드
         </button>
         <button onclick="openAddUserModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-2">
-          <i class="fas fa-plus"></i> 직원 추가
+          <i class="fas fa-user-plus"></i> 직원 추가
         </button>
       </div>\` : ''}
     </div>
 
-    <!-- 팀별 필터 탭 -->
-    <div class="flex flex-wrap gap-2 mb-5" id="dept-filter">
-      <button onclick="setDeptFilter('all')" class="dept-tab px-4 py-1.5 rounded-full text-sm font-medium transition border \${hrFilterDept==='all' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}">
-        전체 <span class="ml-1 text-xs opacity-70">\${users.length}</span>
-      </button>
-      \${depts.map(d => \`
-        <button onclick="setDeptFilter('\${d}')" class="dept-tab px-4 py-1.5 rounded-full text-sm font-medium transition border \${hrFilterDept===d ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}">
-          \${d} <span class="ml-1 text-xs opacity-70">\${users.filter(u=>u.department===d).length}</span>
+    <!-- 검색 + 필터 -->
+    <div class="flex flex-wrap gap-2 mb-4 items-center">
+      <div class="relative">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+        <input id="hr-search-input" type="text" placeholder="이름, 부서, 직급 검색..."
+          value="\${hrSearchKeyword}"
+          oninput="hrSearchKeyword=this.value; renderHRCards()"
+          class="pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-sm w-52 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+      </div>
+      <div class="flex flex-wrap gap-1.5" id="dept-filter">
+        <button onclick="setDeptFilter('all')" class="dept-tab px-3 py-1.5 rounded-full text-xs font-medium transition border \${hrFilterDept==='all' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}">
+          전체 <span class="opacity-70">\${users.length}</span>
         </button>
-      \`).join('')}
+        \${depts.map(d => \`
+          <button onclick="setDeptFilter('\${d}')" class="dept-tab px-3 py-1.5 rounded-full text-xs font-medium transition border \${hrFilterDept===d ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}">
+            \${d} <span class="opacity-70">\${users.filter(u=>u.department===d).length}</span>
+          </button>
+        \`).join('')}
+      </div>
     </div>
 
-    <div id="hr-list"></div>
+    <!-- 카드 그리드 + 상세 패널 래퍼 -->
+    <div class="flex gap-4 items-start">
+      <div id="hr-card-grid" class="flex-1 min-w-0"></div>
+      <!-- 우측 상세 패널 -->
+      <div id="hr-detail-panel" class="hidden w-72 shrink-0 sticky top-0">
+      </div>
+    </div>
   \`;
 
-  renderHRList();
+  renderHRCards();
 }
 
 function setDeptFilter(dept) {
   hrFilterDept = dept;
-  // 탭 스타일 업데이트
   document.querySelectorAll('.dept-tab').forEach(btn => {
-    const isActive = btn.textContent.trim().startsWith(dept === 'all' ? '전체' : dept);
-    btn.className = \`dept-tab px-4 py-1.5 rounded-full text-sm font-medium transition border \${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}\`;
+    const txt = btn.textContent.trim();
+    const isActive = dept === 'all' ? txt.startsWith('전체') : txt.startsWith(dept);
+    btn.className = \`dept-tab px-3 py-1.5 rounded-full text-xs font-medium transition border \${isActive ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}\`;
   });
-  renderHRList();
+  renderHRCards();
 }
 
-function renderHRList() {
-  const listEl = document.getElementById('hr-list');
-  if (!listEl) return;
+function renderHRCards() {
+  const gridEl = document.getElementById('hr-card-grid');
+  if (!gridEl) return;
 
-  const filtered = hrFilterDept === 'all'
-    ? hrAllUsers
+  let filtered = hrFilterDept === 'all'
+    ? [...hrAllUsers]
     : hrAllUsers.filter(u => u.department === hrFilterDept);
 
+  if (hrSearchKeyword) {
+    const kw = hrSearchKeyword.toLowerCase();
+    filtered = filtered.filter(u =>
+      (u.name||'').toLowerCase().includes(kw) ||
+      (u.department||'').toLowerCase().includes(kw) ||
+      (u.position||'').toLowerCase().includes(kw) ||
+      (u.employee_id||'').toLowerCase().includes(kw)
+    );
+  }
+
+  const cntEl = document.getElementById('hr-result-count');
+  if (cntEl) cntEl.textContent = filtered.length;
+
   if (!filtered.length) {
-    listEl.innerHTML = \`<div class="card py-16 text-center text-slate-400"><i class="fas fa-users text-4xl mb-3 block"></i>해당 부서 직원이 없습니다.</div>\`;
+    gridEl.innerHTML = \`<div class="card py-16 text-center text-slate-400 col-span-3">
+      <i class="fas fa-search text-4xl mb-3 block"></i>검색 결과가 없습니다.</div>\`;
     return;
   }
 
-  // 부서별 그룹핑
-  const deptMap = {};
+  let html = \`<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">\`;
   filtered.forEach(u => {
-    if (!deptMap[u.department]) deptMap[u.department] = [];
-    deptMap[u.department].push(u);
-  });
-
-  let html = \`<div class="space-y-5">\`;
-  for (const [dept, members] of Object.entries(deptMap)) {
+    const color = hrAvatarColor(u.id);
+    const isSelected = u.id === hrSelectedUserId;
+    const usedPct = u.annual_leave_total
+      ? Math.round(((u.annual_leave_total - (u.remaining_days ?? u.annual_leave_total)) / u.annual_leave_total) * 100)
+      : 0;
     html += \`
-      <div class="card overflow-hidden">
-        <div class="px-5 py-3 bg-slate-50 border-b flex items-center gap-2">
-          \${currentUser.role === 'admin' ? \`
-          <input type="checkbox" class="dept-check rounded border-slate-300 text-indigo-600"
-            onchange="toggleDeptCheck('\${dept}', this.checked)"
-            title="\${dept} 전체 선택" />\` : ''}
-          <i class="fas fa-layer-group text-indigo-500 text-sm"></i>
-          <span class="font-semibold text-slate-700 text-sm">\${dept}</span>
-          <span class="text-slate-400 text-xs">\${members.length}명</span>
-        </div>
-        <div class="divide-y">
-    \`;
-    members.forEach(u => {
-      html += \`
-        <div class="flex items-center gap-3 px-5 py-4 hover:bg-slate-50 transition" id="hr-row-\${u.id}">
-          \${currentUser.role === 'admin' ? \`
-          <input type="checkbox" class="user-check rounded border-slate-300 text-indigo-600 shrink-0"
-            data-id="\${u.id}" onchange="toggleUserCheck(\${u.id}, this.checked)" \${hrChecked.has(u.id) ? 'checked' : ''} />\` : ''}
-          <div class="flex items-center gap-3 flex-1 min-w-0 cursor-pointer" onclick="openUserDetail(\${u.id})">
-            <div class="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
-              <span class="text-indigo-600 font-bold">\${u.name[0]}</span>
-            </div>
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="font-semibold text-slate-800">\${u.name}</span>
-                <span class="badge \${u.role === 'admin' ? 'badge-admin' : 'badge-employee'}">\${u.role === 'admin' ? '관리자' : '직원'}</span>
+      <div id="hr-card-\${u.id}" onclick="openHRDetailPanel(\${u.id})"
+        class="bg-white rounded-xl border \${isSelected ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200 hover:border-indigo-300'} p-4 cursor-pointer transition shadow-sm hover:shadow-md group">
+        <!-- 카드 상단: 아바타 + 이름 + 상태 -->
+        <div class="flex items-start justify-between mb-3">
+          <div class="flex items-center gap-3">
+            <div class="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold text-base shrink-0 shadow-sm"
+              style="background:\${color}">\${u.name[0]}</div>
+            <div>
+              <div class="flex items-center gap-1.5">
+                <span class="font-bold text-slate-800 text-sm">\${u.name}</span>
+                \${u.role === 'admin' ? '<span class="text-xs px-1.5 py-0.5 rounded font-semibold" style="background:rgba(245,158,11,0.15);color:#d97706;">관리자</span>' : ''}
               </div>
-              <div class="text-slate-500 text-xs mt-0.5">\${u.position} · \${u.employee_id}</div>
-            </div>
-            <div class="text-right hidden sm:block shrink-0">
-              <div class="text-slate-500 text-xs">입사일</div>
-              <div class="text-slate-700 text-sm">\${formatDate(u.hire_date)}</div>
-            </div>
-            <div class="text-right hidden md:block shrink-0">
-              <div class="text-slate-500 text-xs">연락처</div>
-              <div class="text-slate-700 text-sm">\${u.phone || '-'}</div>
+              <div class="text-xs text-slate-500 mt-0.5">\${u.position || '-'}</div>
             </div>
           </div>
-          \${currentUser.role === 'admin' ? \`
-          <div class="flex gap-1 shrink-0">
-            <button onclick="openEditUserModal(\${u.id})" class="text-slate-400 hover:text-indigo-600 transition text-sm px-2 py-1"><i class="fas fa-edit"></i></button>
-            <button onclick="deleteUser(\${u.id})" class="text-slate-400 hover:text-red-500 transition text-sm px-2 py-1"><i class="fas fa-trash"></i></button>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0" style="background:#dcfce7;color:#16a34a;">재직</span>
+        </div>
+        <!-- 부서 + 입사일 -->
+        <div class="space-y-1.5 mb-3">
+          <div class="flex items-center gap-2 text-xs text-slate-500">
+            <i class="fas fa-layer-group w-3 text-center text-indigo-400"></i>
+            <span class="text-slate-600">\${u.department || '-'}</span>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-slate-500">
+            <i class="fas fa-calendar w-3 text-center text-indigo-400"></i>
+            <span>입사 \${formatDate(u.hire_date)}</span>
+          </div>
+          \${u.phone ? \`<div class="flex items-center gap-2 text-xs text-slate-500">
+            <i class="fas fa-phone w-3 text-center text-indigo-400"></i>
+            <span>\${u.phone}</span>
           </div>\` : ''}
         </div>
-      \`;
-    });
-    html += \`</div></div>\`;
-  }
+        <!-- 연차 진행바 -->
+        <div class="mb-3">
+          <div class="flex justify-between text-xs text-slate-500 mb-1">
+            <span>연차 사용률</span>
+            <span class="font-medium text-slate-700">\${usedPct}%</span>
+          </div>
+          <div class="w-full bg-slate-100 rounded-full h-1.5">
+            <div class="h-1.5 rounded-full transition-all" style="width:\${usedPct}%;background:\${usedPct>80?'#ef4444':usedPct>50?'#f59e0b':'#6366f1'}"></div>
+          </div>
+        </div>
+        <!-- 하단: 사원번호 + 액션 -->
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-slate-400 font-mono">\${u.employee_id}</span>
+          \${currentUser.role === 'admin' ? \`
+          <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition">
+            <button onclick="event.stopPropagation(); openEditUserModal(\${u.id})"
+              class="text-slate-400 hover:text-indigo-600 text-xs px-2 py-1 rounded hover:bg-indigo-50 transition">
+              <i class="fas fa-edit"></i>
+            </button>
+            <button onclick="event.stopPropagation(); deleteUser(\${u.id})"
+              class="text-slate-400 hover:text-red-500 text-xs px-2 py-1 rounded hover:bg-red-50 transition">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>\` : ''}
+        </div>
+      </div>
+    \`;
+  });
   html += \`</div>\`;
-  listEl.innerHTML = html;
+  gridEl.innerHTML = html;
+}
+
+// ── 우측 상세 패널 ──────────────────────────────────
+async function openHRDetailPanel(id) {
+  // 선택 카드 하이라이트 토글
+  if (hrSelectedUserId === id) {
+    hrSelectedUserId = null;
+    document.getElementById('hr-detail-panel').classList.add('hidden');
+    document.querySelectorAll('[id^="hr-card-"]').forEach(el => {
+      el.classList.remove('border-indigo-400','ring-2','ring-indigo-200');
+      el.classList.add('border-slate-200');
+    });
+    return;
+  }
+  hrSelectedUserId = id;
+  // 카드 하이라이트
+  document.querySelectorAll('[id^="hr-card-"]').forEach(el => {
+    el.classList.remove('border-indigo-400','ring-2','ring-indigo-200');
+    el.classList.add('border-slate-200');
+  });
+  const selCard = document.getElementById('hr-card-' + id);
+  if (selCard) { selCard.classList.add('border-indigo-400','ring-2','ring-indigo-200'); selCard.classList.remove('border-slate-200'); }
+
+  const panel = document.getElementById('hr-detail-panel');
+  panel.classList.remove('hidden');
+  panel.innerHTML = \`<div class="bg-white border border-slate-200 rounded-xl shadow-lg p-5 flex justify-center">
+    <i class="fas fa-spinner fa-spin text-indigo-400 text-xl"></i></div>\`;
+
+  const [u, stats] = await Promise.all([
+    api('GET', '/users/' + id),
+    api('GET', '/leaves/stats?user_id=' + id)
+  ]);
+
+  const color = hrAvatarColor(u.id);
+  const usedDays  = stats.error ? 0 : (stats.used || 0);
+  const totalDays = stats.error ? (u.annual_leave_total||0) : (stats.total || 0);
+  const remDays   = stats.error ? totalDays : (stats.remaining || 0);
+  const usedPct   = totalDays ? Math.round((usedDays / totalDays) * 100) : 0;
+
+  panel.innerHTML = \`
+    <div class="bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+      <!-- 패널 헤더 -->
+      <div class="p-4 border-b" style="background:linear-gradient(135deg,#eef2ff,#e0e7ff)">
+        <div class="flex items-start justify-between mb-3">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-md"
+              style="background:\${color}">\${u.name[0]}</div>
+            <div>
+              <div class="flex items-center gap-1.5">
+                <span class="font-bold text-slate-800">\${u.name}</span>
+                <span class="text-xs px-1.5 py-0.5 rounded font-medium" style="background:#dcfce7;color:#16a34a;">재직</span>
+              </div>
+              <div class="text-xs text-slate-500 mt-0.5">\${u.position || '-'}</div>
+              <div class="text-xs text-indigo-600 mt-0.5">\${u.department || '-'}</div>
+            </div>
+          </div>
+          <button onclick="closeHRDetailPanel()" class="text-slate-400 hover:text-slate-600 text-lg leading-none p-1">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <!-- 액션 버튼 -->
+        \${currentUser.role === 'admin' ? \`
+        <div class="flex gap-2">
+          <button onclick="openEditUserModal(\${u.id})" class="flex-1 flex items-center justify-center gap-1.5 bg-white text-indigo-600 border border-indigo-200 rounded-lg py-1.5 text-xs font-semibold hover:bg-indigo-50 transition">
+            <i class="fas fa-edit"></i> 수정
+          </button>
+          <button onclick="deleteUser(\${u.id})" class="flex items-center gap-1 bg-white text-red-400 border border-red-200 rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-red-50 transition">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>\` : ''}
+      </div>
+      <!-- 연락처 정보 -->
+      <div class="p-4 border-b">
+        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">연락처 정보</div>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2 text-xs">
+            <i class="fas fa-envelope w-4 text-center text-indigo-400"></i>
+            <span class="text-slate-600 truncate">\${u.email}</span>
+          </div>
+          \${u.phone ? \`<div class="flex items-center gap-2 text-xs">
+            <i class="fas fa-phone w-4 text-center text-indigo-400"></i>
+            <span class="text-slate-600">\${u.phone}</span>
+          </div>\` : ''}
+          <div class="flex items-center gap-2 text-xs">
+            <i class="fas fa-id-badge w-4 text-center text-indigo-400"></i>
+            <span class="text-slate-600 font-mono">\${u.employee_id}</span>
+          </div>
+          <div class="flex items-center gap-2 text-xs">
+            <i class="fas fa-calendar-alt w-4 text-center text-indigo-400"></i>
+            <span class="text-slate-600">입사일 \${formatDate(u.hire_date)}</span>
+          </div>
+        </div>
+      </div>
+      <!-- 연차 현황 -->
+      <div class="p-4">
+        <div class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">연차 현황</div>
+        <div class="grid grid-cols-2 gap-2 mb-3">
+          <div class="rounded-lg p-2.5 text-center" style="background:#eef2ff">
+            <div class="text-lg font-bold text-indigo-600">\${remDays}</div>
+            <div class="text-xs text-slate-500">잔여 연차</div>
+          </div>
+          <div class="rounded-lg p-2.5 text-center" style="background:#f0fdf4">
+            <div class="text-lg font-bold text-green-600">\${usedDays}</div>
+            <div class="text-xs text-slate-500">사용 연차</div>
+          </div>
+        </div>
+        <div class="flex justify-between text-xs text-slate-500 mb-1">
+          <span>연차 사용 현황</span>
+          <span class="font-medium">\${usedDays} / \${totalDays}일</span>
+        </div>
+        <div class="w-full bg-slate-100 rounded-full h-2">
+          <div class="h-2 rounded-full" style="width:\${usedPct}%;background:\${usedPct>80?'#ef4444':usedPct>50?'#f59e0b':'#6366f1'}"></div>
+        </div>
+        <div class="text-right text-xs text-slate-400 mt-1">\${usedPct}%</div>
+      </div>
+    </div>
+  \`;
+}
+
+function closeHRDetailPanel() {
+  hrSelectedUserId = null;
+  document.getElementById('hr-detail-panel').classList.add('hidden');
+  document.querySelectorAll('[id^="hr-card-"]').forEach(el => {
+    el.classList.remove('border-indigo-400','ring-2','ring-indigo-200');
+    el.classList.add('border-slate-200');
+  });
+}
+
+// 기존 openUserDetail은 패널 방식으로 위임
+function openUserDetail(id) {
+  openHRDetailPanel(id);
 }
 
 // 체크박스 관리
@@ -1249,85 +1436,138 @@ async function renderAdminAllStats() {
   el.innerHTML = '<div class="flex justify-center py-12"><i class="fas fa-spinner fa-spin text-indigo-400 text-2xl"></i></div>';
 
   const allStats = await api('GET', '/leaves/all-stats');
-
-  // 부서 목록
   const depts = [...new Set(allStats.map(u => u.department).filter(Boolean))];
-
-  let html = \`
-    <!-- 검색/필터 -->
-    <div class="card p-4 mb-4 flex flex-wrap gap-3 items-center">
-      <input id="lf-search" type="text" placeholder="이름 검색..." value="\${leaveSearchKeyword}"
-        oninput="leaveSearchKeyword=this.value; renderAdminAllStats()"
-        class="border border-slate-200 rounded-lg px-3 py-2 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-      <select id="lf-dept" onchange="leaveFilterDept=this.value; renderAdminAllStats()"
-        class="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
-        <option value="">전체 부서</option>
-        \${depts.map(d => '<option value="' + d + '" ' + (leaveFilterDept===d?'selected':'') + '>' + d + '</option>').join('')}
-      </select>
-      <button onclick="openAdminLeaveModal()" class="ml-auto bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-2">
-        <i class="fas fa-plus"></i> 연차 직접 등록
-      </button>
-    </div>
-    <div class="card overflow-hidden">
-      <div class="px-5 py-4 border-b">
-        <h3 class="font-semibold text-slate-700">전체 직원 연차 현황</h3>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-50">
-            <tr>
-              <th class="text-left px-5 py-3 text-slate-500 font-medium">직원</th>
-              <th class="text-center px-3 py-3 text-slate-500 font-medium">총 연차</th>
-              <th class="text-center px-3 py-3 text-slate-500 font-medium">사용</th>
-              <th class="text-center px-3 py-3 text-slate-500 font-medium">대기</th>
-              <th class="text-center px-3 py-3 text-slate-500 font-medium">잔여</th>
-              <th class="text-left px-3 py-3 text-slate-500 font-medium hidden md:table-cell">사용률</th>
-              <th class="text-center px-3 py-3 text-slate-500 font-medium">상세</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y">
-  \`;
 
   let filtered = allStats;
   if (leaveFilterDept) filtered = filtered.filter(u => u.department === leaveFilterDept);
   if (leaveSearchKeyword) filtered = filtered.filter(u => u.name && u.name.includes(leaveSearchKeyword));
 
-  filtered.forEach(u => {
-    const pct = u.annual_leave_total ? Math.round((u.used_days / u.annual_leave_total) * 100) : 0;
-    const remainClass = u.remaining_days < 3 ? 'text-red-500 font-bold' : 'text-green-600 font-medium';
-    html += \`
-      <tr class="hover:bg-slate-50">
-        <td class="px-5 py-3">
-          <div class="font-medium text-slate-800">\${u.name}</div>
-          <div class="text-xs text-slate-400">\${u.department} · \${u.position}</div>
-        </td>
-        <td class="text-center px-3 py-3 text-slate-700">\${u.annual_leave_total}</td>
-        <td class="text-center px-3 py-3 text-indigo-600 font-medium">\${u.used_days}</td>
-        <td class="text-center px-3 py-3">
-          \${u.pending_days > 0 ? '<span class="bg-amber-100 text-amber-700 text-xs px-2 py-0.5 rounded-full font-medium">' + u.pending_days + '</span>' : '<span class="text-slate-300">-</span>'}
-        </td>
-        <td class="text-center px-3 py-3 \${remainClass}">\${u.remaining_days}</td>
-        <td class="px-3 py-3 hidden md:table-cell">
-          <div class="flex items-center gap-2">
-            <div class="leave-bar flex-1"><div class="leave-bar-fill" style="width:\${pct}%"></div></div>
-            <span class="text-xs text-slate-500 w-8">\${pct}%</span>
-          </div>
-        </td>
-        <td class="text-center px-3 py-3">
-          <button onclick="viewUserLeaves(\${u.id}, '\${u.name}')"
-            class="text-indigo-500 hover:text-indigo-700 text-xs px-2 py-1 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition">
-            내역
-          </button>
-        </td>
-      </tr>
-    \`;
-  });
+  // 요약 통계
+  const totalEmployees = filtered.length;
+  const lowLeave = filtered.filter(u => u.remaining_days < 3).length;
+  const pendingAll = filtered.reduce((s,u) => s + (u.pending_days||0), 0);
+
+  let html = \`
+    <!-- 요약 카드 3개 -->
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      <div class="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style="background:#eef2ff">
+          <i class="fas fa-users text-indigo-500"></i>
+        </div>
+        <div>
+          <div class="text-xl font-bold text-slate-800">\${totalEmployees}</div>
+          <div class="text-xs text-slate-500">전체 직원</div>
+        </div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style="background:#fef3c7">
+          <i class="fas fa-clock text-amber-500"></i>
+        </div>
+        <div>
+          <div class="text-xl font-bold text-amber-600">\${pendingAll}</div>
+          <div class="text-xs text-slate-500">대기 중 일수</div>
+        </div>
+      </div>
+      <div class="bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-3 shadow-sm">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style="background:#fee2e2">
+          <i class="fas fa-exclamation-triangle text-red-500"></i>
+        </div>
+        <div>
+          <div class="text-xl font-bold text-red-500">\${lowLeave}</div>
+          <div class="text-xs text-slate-500">잔여 3일 미만</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 검색/필터 바 -->
+    <div class="bg-white border border-slate-200 rounded-xl p-3 mb-4 flex flex-wrap gap-2 items-center shadow-sm">
+      <div class="relative">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+        <input id="lf-search" type="text" placeholder="이름 검색..." value="\${leaveSearchKeyword}"
+          oninput="leaveSearchKeyword=this.value; renderAdminAllStats()"
+          class="pl-8 pr-3 py-2 border border-slate-200 rounded-lg text-sm w-40 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+      </div>
+      <select id="lf-dept" onchange="leaveFilterDept=this.value; renderAdminAllStats()"
+        class="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
+        <option value="">전체 부서</option>
+        \${depts.map(d => '<option value="' + d + '" ' + (leaveFilterDept===d?'selected':'') + '>' + d + '</option>').join('')}
+      </select>
+      <span class="text-xs text-slate-400">총 \${filtered.length}명</span>
+      <button onclick="openAdminLeaveModal()" class="ml-auto bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-indigo-700 transition flex items-center gap-2">
+        <i class="fas fa-plus"></i> 연차 직접 등록
+      </button>
+    </div>
+
+    <!-- 직원 연차 카드 그리드 -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+  \`;
 
   if (!filtered.length) {
-    html += \`<tr><td colspan="7" class="text-center py-8 text-slate-400">해당하는 직원이 없습니다.</td></tr>\`;
+    html += \`<div class="col-span-3 bg-white rounded-xl border border-slate-200 py-16 text-center text-slate-400">
+      <i class="fas fa-search text-3xl mb-2 block"></i>해당하는 직원이 없습니다.</div>\`;
+  } else {
+    filtered.forEach(u => {
+      const pct = u.annual_leave_total ? Math.round((u.used_days / u.annual_leave_total) * 100) : 0;
+      const color = hrAvatarColor(u.id);
+      const isLow = u.remaining_days < 3;
+      const barColor = pct > 80 ? '#ef4444' : pct > 50 ? '#f59e0b' : '#6366f1';
+      html += \`
+        <div class="bg-white border \${isLow ? 'border-red-200' : 'border-slate-200'} rounded-xl p-4 shadow-sm hover:shadow-md transition group">
+          <!-- 상단: 아바타 + 이름 -->
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2.5">
+              <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shrink-0"
+                style="background:\${color}">\${u.name[0]}</div>
+              <div>
+                <div class="font-bold text-slate-800 text-sm">\${u.name}</div>
+                <div class="text-xs text-slate-400">\${u.department} · \${u.position}</div>
+              </div>
+            </div>
+            \${isLow ? '<span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0" style="background:#fee2e2;color:#dc2626;"><i class="fas fa-exclamation-circle mr-1"></i>잔여부족</span>' : ''}
+          </div>
+          <!-- 연차 수치 3칸 -->
+          <div class="grid grid-cols-3 gap-1.5 mb-3">
+            <div class="rounded-lg p-2 text-center" style="background:#f8fafc">
+              <div class="font-bold text-slate-700 text-base">\${u.annual_leave_total}</div>
+              <div class="text-xs text-slate-400">총 연차</div>
+            </div>
+            <div class="rounded-lg p-2 text-center" style="background:#eef2ff">
+              <div class="font-bold text-indigo-600 text-base">\${u.used_days}</div>
+              <div class="text-xs text-slate-400">사용</div>
+            </div>
+            <div class="rounded-lg p-2 text-center" style="background:\${isLow?'#fee2e2':'#f0fdf4'}">
+              <div class="font-bold \${isLow?'text-red-500':'text-green-600'} text-base">\${u.remaining_days}</div>
+              <div class="text-xs text-slate-400">잔여</div>
+            </div>
+          </div>
+          <!-- 진행바 -->
+          <div class="mb-3">
+            <div class="flex justify-between text-xs text-slate-400 mb-1">
+              <span>사용률</span>
+              <span class="font-medium" style="color:\${barColor}">\${pct}%</span>
+            </div>
+            <div class="w-full bg-slate-100 rounded-full h-1.5">
+              <div class="h-1.5 rounded-full transition-all" style="width:\${pct}%;background:\${barColor}"></div>
+            </div>
+          </div>
+          <!-- 하단: 대기 + 내역 버튼 -->
+          <div class="flex items-center justify-between">
+            <div>
+              \${u.pending_days > 0
+                ? '<span class="text-xs px-2 py-0.5 rounded-full font-medium" style="background:#fef3c7;color:#d97706;"><i class="fas fa-clock mr-1"></i>대기 ' + u.pending_days + '일</span>'
+                : '<span class="text-xs text-slate-300">대기 없음</span>'}
+            </div>
+            <button onclick="viewUserLeaves(\${u.id}, '\${u.name}')"
+              class="text-xs px-2.5 py-1 border border-indigo-200 text-indigo-500 rounded-lg hover:bg-indigo-50 transition font-medium">
+              <i class="fas fa-list-ul mr-1"></i>내역
+            </button>
+          </div>
+        </div>
+      \`;
+    });
   }
 
-  html += \`</tbody></table></div></div>\`;
+  html += \`</div>\`;
   el.innerHTML = html;
 }
 
