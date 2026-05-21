@@ -503,6 +503,7 @@ function renderPage(page) {
 
 // ==================== 인사 관리 ====================
 let hrAllUsers = [];
+let hrLeaveStatsMap = {}; // id → {used_days, remaining_days, annual_leave_total}
 let hrFilterDept = 'all';
 let hrChecked = new Set();
 let hrSearchKeyword = '';
@@ -525,9 +526,14 @@ function hrAvatarColor(id) {
 
 async function renderHR(container) {
   hrChecked = new Set();
-  const users = await api('GET', '/users');
+  const [users, allStats] = await Promise.all([
+    api('GET', '/users'),
+    api('GET', '/leaves/all-stats')
+  ]);
   if (users.error) { container.innerHTML = \`<p class="text-red-500">\${users.error}</p>\`; return; }
   hrAllUsers = users;
+  hrLeaveStatsMap = {};
+  if (Array.isArray(allStats)) { allStats.forEach(s => { hrLeaveStatsMap[s.id] = s; }); }
 
   const depts = [...new Set(users.map(u => u.department))].sort();
 
@@ -626,28 +632,41 @@ function renderHRCards() {
   filtered.forEach(u => {
     const color = hrAvatarColor(u.id);
     const isSelected = u.id === hrSelectedUserId;
-    const usedPct = u.annual_leave_total
-      ? Math.round(((u.annual_leave_total - (u.remaining_days ?? u.annual_leave_total)) / u.annual_leave_total) * 100)
-      : 0;
+    const isChecked = hrChecked.has(u.id);
+    // 연차 통계: all-stats 맵 우선, 없으면 users 필드 fallback
+    const ls = hrLeaveStatsMap[u.id];
+    const totalDays = ls ? (ls.annual_leave_total || 0) : (u.annual_leave_total || 0);
+    const usedDays  = ls ? (ls.used_days || 0) : 0;
+    const remDays   = ls ? (ls.remaining_days !== undefined ? ls.remaining_days : totalDays) : totalDays;
+    const usedPct   = totalDays ? Math.round((usedDays / totalDays) * 100) : 0;
+    const barColor  = usedPct > 80 ? '#ef4444' : usedPct > 50 ? '#f59e0b' : '#6366f1';
     html += \`
-      <div id="hr-card-\${u.id}" onclick="openHRDetailPanel(\${u.id})"
-        class="bg-white rounded-xl border \${isSelected ? 'border-indigo-400 ring-2 ring-indigo-200' : 'border-slate-200 hover:border-indigo-300'} p-4 cursor-pointer transition shadow-sm hover:shadow-md group">
-        <!-- 카드 상단: 아바타 + 이름 + 상태 -->
-        <div class="flex items-start justify-between mb-3">
-          <div class="flex items-center gap-3">
-            <div class="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold text-base shrink-0 shadow-sm"
-              style="background:\${color}">\${u.name[0]}</div>
-            <div>
-              <div class="flex items-center gap-1.5">
-                <span class="font-bold text-slate-800 text-sm">\${u.name}</span>
-                \${u.role === 'admin' ? '<span class="text-xs px-1.5 py-0.5 rounded font-semibold" style="background:rgba(245,158,11,0.15);color:#d97706;">관리자</span>' : ''}
-              </div>
-              <div class="text-xs text-slate-500 mt-0.5">\${u.position || '-'}</div>
+      <div id="hr-card-\${u.id}"
+        onclick="hrCardClick(event, \${u.id})"
+        class="bg-white rounded-xl border \${isChecked ? 'border-indigo-500 ring-2 ring-indigo-200' : isSelected ? 'border-indigo-400 ring-2 ring-indigo-100' : 'border-slate-200 hover:border-indigo-300'} p-4 cursor-pointer transition shadow-sm hover:shadow-md group relative">
+        <!-- 체크박스 (관리자) -->
+        \${currentUser.role === 'admin' ? \`
+        <div class="absolute top-3 right-3 z-10" onclick="event.stopPropagation()">
+          <input type="checkbox" class="hr-user-check w-4 h-4 rounded border-slate-300 cursor-pointer"
+            style="accent-color:#6366f1"
+            data-id="\${u.id}"
+            \${isChecked ? 'checked' : ''}
+            onchange="toggleHRCheck(\${u.id}, this.checked)" />
+        </div>\` : ''}
+        <!-- 카드 상단: 아바타 + 이름 + 재직 -->
+        <div class="flex items-start gap-3 mb-3 pr-7">
+          <div class="w-11 h-11 rounded-full flex items-center justify-center text-white font-bold text-base shrink-0 shadow-sm"
+            style="background:\${color}">\${u.name[0]}</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="font-bold text-slate-800 text-sm">\${u.name}</span>
+              \${u.role === 'admin' ? '<span class="text-xs px-1.5 py-0.5 rounded font-semibold" style="background:rgba(245,158,11,0.15);color:#d97706;">관리자</span>' : ''}
+              <span class="ml-auto text-xs px-2 py-0.5 rounded-full font-medium shrink-0" style="background:#dcfce7;color:#16a34a;">재직</span>
             </div>
+            <div class="text-xs text-slate-500 mt-0.5">\${u.position || '-'}</div>
           </div>
-          <span class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0" style="background:#dcfce7;color:#16a34a;">재직</span>
         </div>
-        <!-- 부서 + 입사일 -->
+        <!-- 부서 + 입사일 + 연락처 -->
         <div class="space-y-1.5 mb-3">
           <div class="flex items-center gap-2 text-xs text-slate-500">
             <i class="fas fa-layer-group w-3 text-center text-indigo-400"></i>
@@ -662,17 +681,21 @@ function renderHRCards() {
             <span>\${u.phone}</span>
           </div>\` : ''}
         </div>
-        <!-- 연차 진행바 -->
-        <div class="mb-3">
-          <div class="flex justify-between text-xs text-slate-500 mb-1">
-            <span>연차 사용률</span>
-            <span class="font-medium text-slate-700">\${usedPct}%</span>
+        <!-- 연차 사용률 박스 -->
+        <div class="mb-3 p-2.5 rounded-lg" style="background:#f8fafc;border:1px solid #e2e8f0">
+          <div class="flex justify-between items-center mb-1.5">
+            <span class="text-xs text-slate-500 font-medium">연차 사용률</span>
+            <span class="text-xs font-bold" style="color:\${barColor}">\${usedPct}%</span>
           </div>
-          <div class="w-full bg-slate-100 rounded-full h-1.5">
-            <div class="h-1.5 rounded-full transition-all" style="width:\${usedPct}%;background:\${usedPct>80?'#ef4444':usedPct>50?'#f59e0b':'#6366f1'}"></div>
+          <div class="w-full bg-slate-200 rounded-full h-1.5 mb-2">
+            <div class="h-1.5 rounded-full transition-all" style="width:\${usedPct}%;background:\${barColor}"></div>
+          </div>
+          <div class="flex justify-between text-xs">
+            <span class="text-slate-400">사용 <span class="font-semibold text-slate-600">\${usedDays}일</span></span>
+            <span class="text-slate-400">잔여 <span class="font-semibold \${remDays < 3 ? 'text-red-500' : 'text-emerald-600'}">\${remDays}일</span> / 총 <span class="font-medium text-slate-600">\${totalDays}일</span></span>
           </div>
         </div>
-        <!-- 하단: 사원번호 + 액션 -->
+        <!-- 하단: 사원번호 + 수정/삭제 -->
         <div class="flex items-center justify-between">
           <span class="text-xs text-slate-400 font-mono">\${u.employee_id}</span>
           \${currentUser.role === 'admin' ? \`
@@ -692,6 +715,28 @@ function renderHRCards() {
   });
   html += \`</div>\`;
   gridEl.innerHTML = html;
+}
+
+// 카드 클릭: 체크박스 제외하고 상세 패널 오픈
+function hrCardClick(e, id) {
+  if (e.target.type === 'checkbox') return;
+  openHRDetailPanel(id);
+}
+
+// 카드 체크박스 토글
+function toggleHRCheck(id, checked) {
+  if (checked) hrChecked.add(id); else hrChecked.delete(id);
+  const card = document.getElementById('hr-card-' + id);
+  if (card) {
+    if (checked) {
+      card.classList.remove('border-slate-200','border-indigo-400');
+      card.classList.add('border-indigo-500','ring-2','ring-indigo-200');
+    } else {
+      card.classList.remove('border-indigo-500','ring-2','ring-indigo-200');
+      card.classList.add('border-slate-200');
+    }
+  }
+  updateDownloadBtn();
 }
 
 // ── 우측 상세 패널 ──────────────────────────────────
@@ -826,18 +871,8 @@ function openUserDetail(id) {
 }
 
 // 체크박스 관리
-function toggleUserCheck(id, checked) {
-  if (checked) hrChecked.add(id); else hrChecked.delete(id);
-  updateDownloadBtn();
-}
-function toggleDeptCheck(dept, checked) {
-  hrAllUsers.filter(u => u.department === dept).forEach(u => {
-    if (checked) hrChecked.add(u.id); else hrChecked.delete(u.id);
-    const cb = document.querySelector(\`.user-check[data-id="\${u.id}"]\`);
-    if (cb) cb.checked = checked;
-  });
-  updateDownloadBtn();
-}
+// 하위 호환 alias (이전 코드에서 참조할 경우 대비)
+function toggleUserCheck(id, checked) { toggleHRCheck(id, checked); }
 function updateDownloadBtn() {
   const btn = document.getElementById('btn-download');
   const cnt = document.getElementById('checked-count');
