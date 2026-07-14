@@ -2396,7 +2396,7 @@ async function renderDirectory(container) {
   } catch(e) { dirAllUsers = []; }
 
   const depts = [...new Set(dirAllUsers.map(u => u.department).filter(Boolean))];
-  const deptSel = document.getElementById('dir-dept-filter') as HTMLSelectElement;
+  const deptSel = document.getElementById('dir-dept-filter');
   depts.forEach(d => {
     const opt = document.createElement('option');
     opt.value = d; opt.textContent = d;
@@ -2538,9 +2538,9 @@ async function renderMyPage(container) {
 }
 
 async function submitMyPagePwChange() {
-  const curPw = (document.getElementById('mp-cur-pw') as HTMLInputElement)?.value.trim();
-  const newPw = (document.getElementById('mp-new-pw') as HTMLInputElement)?.value.trim();
-  const newPw2 = (document.getElementById('mp-new-pw2') as HTMLInputElement)?.value.trim();
+  const curPw = document.getElementById('mp-cur-pw')?.value.trim();
+  const newPw = document.getElementById('mp-new-pw')?.value.trim();
+  const newPw2 = document.getElementById('mp-new-pw2')?.value.trim();
   const msgEl = document.getElementById('mp-pw-msg');
 
   function showMsg(text, isError) {
@@ -2563,9 +2563,9 @@ async function submitMyPagePwChange() {
     });
     if (res.error) return showMsg(res.error, true);
     showMsg('비밀번호가 성공적으로 변경되었습니다.', false);
-    (document.getElementById('mp-cur-pw') as HTMLInputElement).value = '';
-    (document.getElementById('mp-new-pw') as HTMLInputElement).value = '';
-    (document.getElementById('mp-new-pw2') as HTMLInputElement).value = '';
+    document.getElementById('mp-cur-pw').value = '';
+    document.getElementById('mp-new-pw').value = '';
+    document.getElementById('mp-new-pw2').value = '';
   } catch(e) {
     showMsg('오류가 발생했습니다. 다시 시도해주세요.', true);
   }
