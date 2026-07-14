@@ -98,13 +98,21 @@ users.put('/:id', async (c) => {
   }
 })
 
-// 비밀번호 초기화 (관리자 전용)
+// 비밀번호 변경 (관리자: 전체, 일반 직원: 본인만)
 users.put('/:id/reset-password', async (c) => {
   const role = (c as any).get('userRole')
-  if (role !== 'admin') return c.json({ error: '권한이 없습니다.' }, 403)
+  const myId = (c as any).get('userId')
   const id = Number(c.req.param('id'))
-  const { password } = await c.req.json()
-  if (!password || password.length < 4) return c.json({ error: '비밀번호는 4자 이상이어야 합니다.' }, 400)
+  // 관리자가 아니면 본인 계정만 허용
+  if (role !== 'admin' && myId !== id) return c.json({ error: '권한이 없습니다.' }, 403)
+  const { password, current_password } = await c.req.json()
+  // 일반 직원은 현재 비밀번호 확인 필수
+  if (role !== 'admin') {
+    if (!current_password) return c.json({ error: '현재 비밀번호를 입력해주세요.' }, 400)
+    const row = await c.env.DB.prepare('SELECT password FROM users WHERE id=?').bind(id).first() as any
+    if (!row || row.password !== current_password) return c.json({ error: '현재 비밀번호가 올바르지 않습니다.' }, 400)
+  }
+  if (!password || password.length < 4) return c.json({ error: '새 비밀번호는 4자 이상이어야 합니다.' }, 400)
   await c.env.DB.prepare('UPDATE users SET password=?, updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(password, id).run()
   return c.json({ success: true })
 })

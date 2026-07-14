@@ -221,10 +221,20 @@ app.get('*', (c) => {
         <i class="fas fa-comments w-4 text-center"></i> 사내 메신저
         <span id="unread-badge" class="ml-auto badge" style="background:rgba(255,100,100,.8);color:#fff;display:none"></span>
       </button>
+      <!-- 직원 디렉토리 (직원 전용, 관리자는 인사관리로 대체) -->
+      <button onclick="navigate('directory')" id="menu-directory"
+        class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="directory" style="display:none">
+        <i class="fas fa-address-book w-4 text-center"></i> 직원 디렉토리
+      </button>
+      <!-- 내 설정 (전 직원 공통) -->
+      <button onclick="navigate('mypage')" id="menu-mypage"
+        class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="mypage" style="display:none">
+        <i class="fas fa-user-cog w-4 text-center"></i> 내 설정
+      </button>
       <!-- 관리자 전용 설정 메뉴 -->
       <button onclick="navigate('settings')" id="menu-settings"
         class="sidebar-link w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-indigo-100 text-sm" data-page="settings" style="display:none">
-        <i class="fas fa-cog w-4 text-center"></i> 설정
+        <i class="fas fa-cog w-4 text-center"></i> 시스템 설정
       </button>
     </nav>
 
@@ -439,7 +449,17 @@ async function initApp() {
     }
   }
 
-  // 관리자이면 설정 메뉴 표시
+  // 직원 디렉토리: 일반 직원만 표시 (관리자는 인사관리 사용)
+  const directoryMenu = document.getElementById('menu-directory');
+  if (directoryMenu) {
+    directoryMenu.style.display = currentUser.role !== 'admin' ? '' : 'none';
+  }
+  // 내 설정: 전 직원 공통 표시
+  const mypageMenu = document.getElementById('menu-mypage');
+  if (mypageMenu) {
+    mypageMenu.style.display = '';
+  }
+  // 관리자이면 시스템 설정 메뉴 표시
   const settingsMenu = document.getElementById('menu-settings');
   if (settingsMenu) {
     settingsMenu.style.display = currentUser.role === 'admin' ? '' : 'none';
@@ -471,8 +491,10 @@ async function initApp() {
 // ==================== 네비게이션 ====================
 function navigate(page) {
   const sidebar = document.getElementById('sidebar');
-  // 일반 직원 hr 페이지 접근 차단
-  if (page === 'hr' && currentUser && currentUser.role !== 'admin') return;
+  // 일반 직원 hr/settings 페이지 접근 차단
+  if ((page === 'hr' || page === 'settings') && currentUser && currentUser.role !== 'admin') return;
+  // 관리자는 directory 페이지 대신 hr 사용
+  if (page === 'directory' && currentUser && currentUser.role === 'admin') return;
   // 이미 활성화된 메뉴를 다시 클릭하면 사이드바 토글
   if (currentPage === page) {
     sidebar?.classList.toggle('open');
@@ -499,6 +521,8 @@ function renderPage(page) {
   else if (page === 'notice') renderNotice(c);
   else if (page === 'chat') renderChat(c);
   else if (page === 'settings') renderSettings(c);
+  else if (page === 'directory') renderDirectory(c);
+  else if (page === 'mypage') renderMyPage(c);
 }
 
 // ==================== 인사 관리 ====================
@@ -2317,6 +2341,234 @@ function startUnreadPolling() {
       }
     }
   }, 5000);
+}
+
+// ==================== 직원 디렉토리 (직원 전용 읽기 전용) ====================
+const AVATAR_COLORS_DIR = [
+  'linear-gradient(135deg,#6366f1,#4f46e5)',
+  'linear-gradient(135deg,#8b5cf6,#7c3aed)',
+  'linear-gradient(135deg,#ec4899,#db2777)',
+  'linear-gradient(135deg,#f59e0b,#d97706)',
+  'linear-gradient(135deg,#10b981,#059669)',
+  'linear-gradient(135deg,#3b82f6,#2563eb)',
+  'linear-gradient(135deg,#ef4444,#dc2626)',
+  'linear-gradient(135deg,#14b8a6,#0d9488)',
+];
+let dirAllUsers = [];
+let dirSearchKeyword = '';
+let dirFilterDept = 'all';
+
+async function renderDirectory(container) {
+  container.innerHTML = \`
+    <div class="p-6">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-800">직원 디렉토리</h1>
+          <p class="text-sm text-gray-500 mt-0.5">동료 직원 정보를 확인할 수 있습니다</p>
+        </div>
+        <div class="bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 text-sm text-indigo-600 font-medium">
+          <i class="fas fa-eye mr-1.5"></i>읽기 전용
+        </div>
+      </div>
+      <div class="flex gap-3 mb-5 flex-wrap">
+        <div class="relative flex-1 min-w-[200px]">
+          <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+          <input type="text" id="dir-search" placeholder="이름·부서·직급으로 검색..."
+            class="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            oninput="dirSearchKeyword=this.value; renderDirCards()" />
+        </div>
+        <select id="dir-dept-filter"
+          class="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
+          onchange="dirFilterDept=this.value; renderDirCards()">
+          <option value="all">전체 부서</option>
+        </select>
+      </div>
+      <div id="dir-card-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+      <div id="dir-empty" class="hidden py-20 text-center text-gray-400">
+        <i class="fas fa-users text-4xl mb-3"></i>
+        <p class="text-base">검색 결과가 없습니다</p>
+      </div>
+    </div>
+  \`;
+
+  try {
+    dirAllUsers = await api('GET', '/users');
+  } catch(e) { dirAllUsers = []; }
+
+  const depts = [...new Set(dirAllUsers.map(u => u.department).filter(Boolean))];
+  const deptSel = document.getElementById('dir-dept-filter') as HTMLSelectElement;
+  depts.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d; opt.textContent = d;
+    deptSel.appendChild(opt);
+  });
+
+  renderDirCards();
+}
+
+function renderDirCards() {
+  const kw = (dirSearchKeyword || '').trim().toLowerCase();
+  const dept = dirFilterDept;
+
+  const users = dirAllUsers.filter(u => {
+    if (dept !== 'all' && u.department !== dept) return false;
+    if (kw && ![u.name, u.department, u.position, u.email].some(v => v && v.toLowerCase().includes(kw))) return false;
+    return true;
+  });
+
+  const grid = document.getElementById('dir-card-grid');
+  const empty = document.getElementById('dir-empty');
+  if (!grid) return;
+
+  if (users.length === 0) {
+    grid.innerHTML = '';
+    empty?.classList.remove('hidden');
+    return;
+  }
+  empty?.classList.add('hidden');
+
+  grid.innerHTML = users.map((u, i) => {
+    const color = AVATAR_COLORS_DIR[i % AVATAR_COLORS_DIR.length];
+    const initial = (u.name || '?')[0];
+    const hireDate = u.hire_date ? u.hire_date.substring(0, 10) : '—';
+    const emailHtml = u.email ? \`<div class="flex items-center gap-2"><i class="fas fa-envelope w-4 text-gray-400 text-center"></i><span class="truncate">\${u.email}</span></div>\` : '';
+    const phoneHtml = u.phone ? \`<div class="flex items-center gap-2"><i class="fas fa-phone w-4 text-gray-400 text-center"></i><span>\${u.phone}</span></div>\` : '';
+    return \`
+      <div class="bg-white rounded-xl border border-gray-200 p-5 hover:shadow-md transition-shadow">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
+            style="background:\${color}">\${initial}</div>
+          <div class="min-w-0">
+            <div class="font-semibold text-gray-800 truncate">\${u.name || '—'}</div>
+            <div class="text-xs text-gray-500 truncate">\${u.position || '—'}</div>
+          </div>
+        </div>
+        <div class="space-y-2 text-sm text-gray-600">
+          <div class="flex items-center gap-2">
+            <i class="fas fa-building w-4 text-gray-400 text-center"></i>
+            <span class="truncate">\${u.department || '—'}</span>
+          </div>
+          \${emailHtml}
+          \${phoneHtml}
+          <div class="flex items-center gap-2 pt-1 border-t border-gray-100 mt-2">
+            <i class="fas fa-calendar-alt w-4 text-gray-400 text-center"></i>
+            <span class="text-xs text-gray-500">입사 \${hireDate}</span>
+          </div>
+        </div>
+      </div>
+    \`;
+  }).join('');
+}
+
+// ==================== 내 설정 (마이페이지) ====================
+async function renderMyPage(container) {
+  const u = currentUser;
+  const hireDate = u.hire_date ? u.hire_date.substring(0, 10) : '—';
+  const avatarBg = u.role === 'admin'
+    ? 'linear-gradient(135deg,#f59e0b,#d97706)'
+    : 'linear-gradient(135deg,#6366f1,#4f46e5)';
+  const adminBadge = u.role === 'admin'
+    ? '<span class="inline-block mt-1 text-xs bg-amber-100 text-amber-700 border border-amber-300 rounded px-2 py-0.5 font-semibold">관리자</span>'
+    : '';
+
+  container.innerHTML = \`
+    <div class="p-6 max-w-2xl mx-auto">
+      <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">내 설정</h1>
+        <p class="text-sm text-gray-500 mt-0.5">내 정보 확인 및 비밀번호 변경</p>
+      </div>
+      <div class="bg-white rounded-xl border border-gray-200 p-6 mb-5">
+        <div class="flex items-center gap-4 mb-5">
+          <div class="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-2xl flex-shrink-0"
+            style="background:\${avatarBg}">\${(u.name || '?')[0]}</div>
+          <div>
+            <div class="text-xl font-bold text-gray-800">\${u.name || '—'}</div>
+            <div class="text-sm text-gray-500">\${u.department || '—'} · \${u.position || '—'}</div>
+            \${adminBadge}
+          </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+          <div class="bg-gray-50 rounded-lg p-3">
+            <div class="text-xs text-gray-400 mb-1 font-medium uppercase tracking-wide">사원번호</div>
+            <div class="text-gray-700 font-medium">\${u.employee_id || '—'}</div>
+          </div>
+          <div class="bg-gray-50 rounded-lg p-3">
+            <div class="text-xs text-gray-400 mb-1 font-medium uppercase tracking-wide">이메일</div>
+            <div class="text-gray-700 font-medium truncate">\${u.email || '—'}</div>
+          </div>
+          <div class="bg-gray-50 rounded-lg p-3">
+            <div class="text-xs text-gray-400 mb-1 font-medium uppercase tracking-wide">입사일</div>
+            <div class="text-gray-700 font-medium">\${hireDate}</div>
+          </div>
+          <div class="bg-gray-50 rounded-lg p-3">
+            <div class="text-xs text-gray-400 mb-1 font-medium uppercase tracking-wide">연락처</div>
+            <div class="text-gray-700 font-medium">\${u.phone || '—'}</div>
+          </div>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 class="text-base font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <i class="fas fa-lock text-indigo-500"></i> 비밀번호 변경
+        </h2>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">현재 비밀번호</label>
+            <input type="password" id="mp-cur-pw" placeholder="현재 비밀번호 입력"
+              class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">새 비밀번호</label>
+            <input type="password" id="mp-new-pw" placeholder="새 비밀번호 (4자 이상)"
+              class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">새 비밀번호 확인</label>
+            <input type="password" id="mp-new-pw2" placeholder="새 비밀번호 재입력"
+              class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+          </div>
+          <div id="mp-pw-msg" class="hidden text-sm px-3 py-2 rounded-lg"></div>
+          <button onclick="submitMyPagePwChange()"
+            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors">
+            <i class="fas fa-save mr-2"></i>비밀번호 변경
+          </button>
+        </div>
+      </div>
+    </div>
+  \`;
+}
+
+async function submitMyPagePwChange() {
+  const curPw = (document.getElementById('mp-cur-pw') as HTMLInputElement)?.value.trim();
+  const newPw = (document.getElementById('mp-new-pw') as HTMLInputElement)?.value.trim();
+  const newPw2 = (document.getElementById('mp-new-pw2') as HTMLInputElement)?.value.trim();
+  const msgEl = document.getElementById('mp-pw-msg');
+
+  function showMsg(text, isError) {
+    if (!msgEl) return;
+    msgEl.textContent = text;
+    msgEl.className = 'text-sm px-3 py-2 rounded-lg ' + (isError
+      ? 'bg-red-50 text-red-600 border border-red-200'
+      : 'bg-green-50 text-green-600 border border-green-200');
+    msgEl.classList.remove('hidden');
+  }
+
+  if (!curPw) return showMsg('현재 비밀번호를 입력해주세요.', true);
+  if (!newPw || newPw.length < 4) return showMsg('새 비밀번호는 4자 이상이어야 합니다.', true);
+  if (newPw !== newPw2) return showMsg('새 비밀번호가 일치하지 않습니다.', true);
+
+  try {
+    const res = await api('PUT', '/users/' + currentUser.id + '/reset-password', {
+      current_password: curPw,
+      password: newPw
+    });
+    if (res.error) return showMsg(res.error, true);
+    showMsg('비밀번호가 성공적으로 변경되었습니다.', false);
+    (document.getElementById('mp-cur-pw') as HTMLInputElement).value = '';
+    (document.getElementById('mp-new-pw') as HTMLInputElement).value = '';
+    (document.getElementById('mp-new-pw2') as HTMLInputElement).value = '';
+  } catch(e) {
+    showMsg('오류가 발생했습니다. 다시 시도해주세요.', true);
+  }
 }
 
 // ==================== 설정 ====================
